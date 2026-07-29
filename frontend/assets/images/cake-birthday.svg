@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-labelledby="t">
+  <title id="t">Placeholder image for the Birthday cake collection</title>
+  <rect width="640" height="480" fill="#FBF7F0"/>
+  <rect width="640" height="480" fill="#B76E79" opacity="0.08"/>
+  <g transform="translate(320,255)" fill="none" stroke="#C6A15B" stroke-width="6" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="-120" y="10" width="240" height="70" rx="8"/>
+    <rect x="-80" y="-55" width="160" height="65" rx="8"/>
+    <line x1="0" y1="-55" x2="0" y2="-95"/>
+    <path d="M-8 -95 q8 -14 16 0" fill="#B76E79" stroke="none"/>
+  </g>
+  <text x="320" y="385" text-anchor="middle" font-family="Georgia, 'Playfair Display', serif" font-size="28" fill="#2E1D14">Birthday</text>
+</svg>

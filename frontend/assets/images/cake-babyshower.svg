@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-labelledby="t">
+  <title id="t">Placeholder image for the Baby Shower cake collection</title>
+  <rect width="640" height="480" fill="#FBF7F0"/>
+  <rect width="640" height="480" fill="#E8CB8B" opacity="0.12"/>
+  <g transform="translate(320,255)" fill="none" stroke="#C6A15B" stroke-width="6" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="-110" y="0" width="220" height="65" rx="8"/>
+    <rect x="-75" y="-55" width="150" height="60" rx="8"/>
+    <circle cx="0" cy="-75" r="10" fill="#B76E79" stroke="none"/>
+  </g>
+  <text x="320" y="385" text-anchor="middle" font-family="Georgia, 'Playfair Display', serif" font-size="28" fill="#2E1D14">Baby Shower</text>
+</svg>

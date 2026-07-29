@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-labelledby="t">
+  <title id="t">Placeholder image for the Graduation cake collection</title>
+  <rect width="640" height="480" fill="#FBF7F0"/>
+  <rect width="640" height="480" fill="#2E1D14" opacity="0.06"/>
+  <g transform="translate(320,265)" fill="none" stroke="#C6A15B" stroke-width="6" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="-120" y="10" width="240" height="60" rx="8"/>
+    <rect x="-80" y="-40" width="160" height="55" rx="8"/>
+    <g transform="translate(0,-70)" stroke-width="5">
+      <path d="M-45 0 L0 -20 L45 0 L0 20 Z"/>
+      <line x1="45" y1="0" x2="45" y2="25"/>
+    </g>
+  </g>
+  <text x="320" y="385" text-anchor="middle" font-family="Georgia, 'Playfair Display', serif" font-size="28" fill="#2E1D14">Graduation</text>
+</svg>
