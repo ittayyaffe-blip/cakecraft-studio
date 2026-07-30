@@ -26,7 +26,28 @@ function initFooterYear() {
   }
 }
 
+async function loadCollections() {
+  const container = document.getElementById("collectionsGrid");
+  if (!container) return;
+
+  renderCollectionsLoading(container);
+
+  try {
+    const collections = await getCollections();
+
+    if (collections.length === 0) {
+      renderCollectionsEmpty(container);
+      return;
+    }
+
+    renderCollections(container, collections);
+  } catch (error) {
+    renderCollectionsError(container);
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initNavToggle();
   initFooterYear();
+  loadCollections();
 });
