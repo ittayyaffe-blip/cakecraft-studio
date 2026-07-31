@@ -11,9 +11,9 @@ router = APIRouter(prefix="/templates", tags=["templates"])
 
 
 @router.get("", response_model=list[CakeTemplateResponse])
-def get_templates():
+def get_templates(collection: str | None = None):
     try:
-        return get_active_templates()
+        return get_active_templates(collection)
     except Exception:
         logger.exception("Failed to fetch cake templates")
         raise HTTPException(status_code=500, detail="Failed to fetch cake templates")

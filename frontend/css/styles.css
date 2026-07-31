@@ -353,6 +353,10 @@ h3 {
   padding-block: var(--space-6);
 }
 
+.back-link {
+  margin-bottom: var(--space-4);
+}
+
 .collection-card {
   background: #fff;
   border-radius: var(--radius);
@@ -363,6 +367,14 @@ h3 {
 
 .collection-card:hover {
   transform: translateY(-6px);
+}
+
+.collection-card[role="button"] {
+  cursor: pointer;
+}
+
+.collection-card .btn {
+  margin: 0 var(--space-2) var(--space-2);
 }
 
 .collection-card img {

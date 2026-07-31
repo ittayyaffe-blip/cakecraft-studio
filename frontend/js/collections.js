@@ -13,9 +13,15 @@ function renderCollectionsEmpty(container) {
   container.innerHTML = '<p class="section-subtitle">No collections available.</p>';
 }
 
+function navigateToCollection(collectionName) {
+  window.location.href = `templates.html?collection=${encodeURIComponent(collectionName)}`;
+}
+
 function createCollectionCard(collection) {
   const article = document.createElement("article");
   article.className = "collection-card";
+  article.setAttribute("role", "button");
+  article.setAttribute("tabindex", "0");
 
   const img = document.createElement("img");
   img.src = `assets/images/${collection.image}`;
@@ -31,6 +37,21 @@ function createCollectionCard(collection) {
   description.textContent = collection.description ?? "";
 
   article.append(img, title, description);
+
+  
+  article.addEventListener("click", () => {
+    console.log("Clicked:", collection.name);
+    navigateToCollection(collection.name);
+});
+
+
+  article.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      navigateToCollection(collection.name);
+    }
+  });
+
   return article;
 }
 

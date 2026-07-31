@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cake Templates | Maison de Gâteau Paris</title>
+  <meta name="description" content="Browse handcrafted cake templates by collection at Maison de Gâteau Paris.">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container site-header__inner">
+      <a class="brand" href="index.html">Maison de Gâteau <span>Paris</span></a>
+
+      <button class="nav-toggle" id="navToggle" type="button" aria-expanded="false" aria-controls="siteNav">
+        <span class="nav-toggle__bar"></span>
+        <span class="nav-toggle__bar"></span>
+        <span class="nav-toggle__bar"></span>
+        <span class="sr-only">Menu</span>
+      </button>
+
+      <nav class="site-nav" id="siteNav" aria-label="Primary">
+        <a href="index.html#collections">Collections</a>
+        <a href="index.html#why-us">Why Us</a>
+        <a href="index.html#how-it-works">How It Works</a>
+        <a href="#footer">Contact</a>
+        <a class="btn btn-small" href="index.html#collections">Start Designing</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="collections" aria-labelledby="collectionTitle">
+      <div class="container">
+        <a class="btn btn-small back-link" href="index.html#collections">&larr; Back to Collections</a>
+
+        <h1 id="collectionTitle" class="section-title">Cakes</h1>
+        <p id="collectionSubtitle" class="section-subtitle">Browse our collection.</p>
+
+        <div class="card-grid card-grid--five" id="templatesGrid">
+          <p class="section-subtitle">Loading cake templates...</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer id="footer" class="site-footer">
+    <div class="container site-footer__inner">
+      <div class="site-footer__brand">
+        <p class="brand brand--footer">Maison de Gâteau <span>Paris</span></p>
+        <p>Luxury custom cakes, handcrafted in the heart of Paris.</p>
+      </div>
+
+      <address class="site-footer__contact">
+        <p>15 Rue de Rivoli, Paris, France</p>
+        <p><a href="tel:+33142567890">+33 1 42 56 78 90</a></p>
+        <p><a href="mailto:contact@maisondegateau.fr">contact@maisondegateau.fr</a></p>
+      </address>
+
+      <div class="site-footer__social">
+        <p>Follow us</p>
+        <ul class="social-list">
+          <li>
+            <a href="#" aria-label="Instagram">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg>
+            </a>
+          </li>
+          <li>
+            <a href="#" aria-label="Facebook">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 9h3V5h-3c-2.2 0-4 1.8-4 4v2H8v4h2v6h4v-6h3l1-4h-4V9c0-.6.4-1 1-1z"/></svg>
+            </a>
+          </li>
+          <li>
+            <a href="#" aria-label="Pinterest">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 20c1-2 2-6 2-6M12 4c-4.4 0-7 2.7-7 6 0 2 1 3.5 2.5 4M12 4c4.4 0 7 2.4 7 6s-2 6-5 6c-1.4 0-2.3-.7-2.7-1.5"/></svg>
+            </a>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="site-footer__legal">&copy; <span id="year">2026</span> Maison de Gâteau Paris. All rights reserved.</p>
+  </footer>
+
+  <script src="js/api.js" defer></script>
+  <script src="js/app.js" defer></script>
+  <script src="js/templates.js" defer></script>
+</body>
+</html>
