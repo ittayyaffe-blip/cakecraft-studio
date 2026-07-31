@@ -105,6 +105,25 @@ function refreshPricing() {
   if (servingsEl) servingsEl.textContent = servingRange;
 }
 
+// Reads designerState through summary.js (the only place summary-shaping
+// logic is allowed to happen) and writes the result into the DOM. This is
+// the only function that updates the Order Summary section.
+function refreshSummary() {
+  const summary = buildOrderSummary(designerState);
+
+  const nameEl = document.getElementById("summaryTemplateName");
+  const sizeEl = document.getElementById("summaryCakeSize");
+  const flavorEl = document.getElementById("summaryFlavor");
+  const fillingEl = document.getElementById("summaryFilling");
+  const frostingEl = document.getElementById("summaryFrosting");
+
+  if (nameEl) nameEl.textContent = summary.templateName;
+  if (sizeEl) sizeEl.textContent = summary.cakeSize;
+  if (flavorEl) flavorEl.textContent = summary.flavor;
+  if (fillingEl) fillingEl.textContent = summary.filling;
+  if (frostingEl) frostingEl.textContent = summary.frosting;
+}
+
 async function loadDesigner() {
   const id = getTemplateIdFromUrl();
   if (!id) {
@@ -121,6 +140,7 @@ async function loadDesigner() {
     renderTemplateDetail(response.template);
     renderDesignerOptions(designerOptions);
     refreshPricing();
+    refreshSummary();
   } catch (error) {
     renderTemplateError();
   }
@@ -141,6 +161,7 @@ function handleOptionChange(event) {
   );
 
   refreshPricing();
+  refreshSummary();
   console.log(designerState);
 }
 
