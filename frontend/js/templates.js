@@ -7,7 +7,8 @@ function getCollectionFromUrl() {
 }
 
 function renderTemplatesLoading(container) {
-  container.innerHTML = '<p class="section-subtitle">Loading cake templates...</p>';
+  container.innerHTML =
+    '<p class="section-subtitle">Loading cake templates...</p>';
 }
 
 function renderTemplatesError(container) {
@@ -16,7 +17,12 @@ function renderTemplatesError(container) {
 }
 
 function renderTemplatesEmpty(container) {
-  container.innerHTML = '<p class="section-subtitle">No templates available for this collection.</p>';
+  container.innerHTML =
+    '<p class="section-subtitle">No templates available for this collection.</p>';
+}
+
+function navigateToDesigner(templateId) {
+  window.location.href = `designer.html?id=${encodeURIComponent(templateId)}`;
 }
 
 function createTemplateCard(template) {
@@ -27,6 +33,7 @@ function createTemplateCard(template) {
   img.src = template.preview_image
     ? `assets/images/${template.preview_image}`
     : "assets/images/hero-cake.svg";
+
   img.alt = `${template.name} cake template`;
   img.width = 640;
   img.height = 480;
@@ -43,12 +50,18 @@ function createTemplateCard(template) {
   button.className = "btn btn-small";
   button.textContent = "Design This Cake";
 
+  button.addEventListener("click", () => {
+    navigateToDesigner(template.id);
+  });
+
   article.append(img, title, price, button);
+
   return article;
 }
 
 function renderTemplates(container, templates) {
   container.innerHTML = "";
+
   templates.forEach((template) => {
     container.appendChild(createTemplateCard(template));
   });
@@ -59,12 +72,16 @@ async function loadTemplates() {
   if (!container) return;
 
   const collection = getCollectionFromUrl();
+
   const titleEl = document.getElementById("collectionTitle");
   const subtitleEl = document.getElementById("collectionSubtitle");
 
   if (titleEl) {
-    titleEl.textContent = collection ? `${collection} Cakes` : "All Cakes";
+    titleEl.textContent = collection
+      ? `${collection} Cakes`
+      : "All Cakes";
   }
+
   if (subtitleEl) {
     subtitleEl.textContent = collection
       ? `Browse our ${collection} collection.`
@@ -76,13 +93,14 @@ async function loadTemplates() {
   try {
     const templates = await getTemplates(collection);
 
-    if (templates.length === 0) {
+    if (!templates || templates.length === 0) {
       renderTemplatesEmpty(container);
       return;
     }
 
     renderTemplates(container, templates);
   } catch (error) {
+    console.error("Failed to load templates:", error);
     renderTemplatesError(container);
   }
 }

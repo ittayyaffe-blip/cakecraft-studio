@@ -558,3 +558,13 @@ h3 {
   color: var(--color-ivory-dark);
   opacity: 0.7;
 }
+
+/* ---------- Cake Designer (designer.html) ---------- */
+.template-detail {
+  max-width: 640px;
+  text-align: center;
+}
+
+.template-detail .btn {
+  margin-top: var(--space-4);
+}

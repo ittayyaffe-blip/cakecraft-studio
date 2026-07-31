@@ -25,3 +25,13 @@ async function getTemplates(collection) {
 
   return response.json();
 }
+
+async function getTemplateById(id) {
+  const response = await fetch(`${API_BASE_URL}/templates/${encodeURIComponent(id)}`);
+
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+
+  return response.json();
+}
