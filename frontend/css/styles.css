@@ -568,3 +568,23 @@ h3 {
 .template-detail .btn {
   margin-top: var(--space-4);
 }
+
+.option-group {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+  text-align: left;
+}
+
+.option-group legend {
+  padding-inline: var(--space-1);
+  font-family: var(--font-heading);
+  font-weight: 600;
+  color: var(--color-brown);
+}
+
+.option-group label {
+  display: block;
+  margin-top: var(--space-1);
+}
