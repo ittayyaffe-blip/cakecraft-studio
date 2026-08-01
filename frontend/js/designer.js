@@ -124,6 +124,36 @@ function refreshSummary() {
   if (frostingEl) frostingEl.textContent = summary.frosting;
 }
 
+// Reads designerState through validation.js (the only place validation
+// rules are allowed to live) and writes the result into the DOM. This is
+// the only function that updates the Order Status section or the
+// Start Designing button's disabled state.
+function refreshValidation() {
+  const validation = validateOrder(designerState);
+
+  const statusEl = document.getElementById("validationStatus");
+  const missingListEl = document.getElementById("validationMissingList");
+  const startDesigningBtn = document.getElementById("startDesigningBtn");
+
+  if (statusEl) {
+    statusEl.textContent = validation.valid ? "✅ Ready to order" : "❌ Missing";
+  }
+
+  if (missingListEl) {
+    missingListEl.innerHTML = "";
+    validation.missing.forEach((label) => {
+      const item = document.createElement("li");
+      item.className = "section-subtitle";
+      item.textContent = label;
+      missingListEl.appendChild(item);
+    });
+  }
+
+  if (startDesigningBtn) {
+    startDesigningBtn.disabled = !validation.valid;
+  }
+}
+
 async function loadDesigner() {
   const id = getTemplateIdFromUrl();
   if (!id) {
@@ -141,6 +171,7 @@ async function loadDesigner() {
     renderDesignerOptions(designerOptions);
     refreshPricing();
     refreshSummary();
+    refreshValidation();
   } catch (error) {
     renderTemplateError();
   }
@@ -162,6 +193,7 @@ function handleOptionChange(event) {
 
   refreshPricing();
   refreshSummary();
+  refreshValidation();
   console.log(designerState);
 }
 

@@ -61,7 +61,11 @@
         <p class="section-subtitle">Filling: <span id="summaryFilling"></span></p>
         <p class="section-subtitle">Frosting: <span id="summaryFrosting"></span></p>
 
-        <button id="startDesigningBtn" type="button" class="btn btn-primary">Start Designing</button>
+        <h2 class="section-title">Order Status</h2>
+        <p class="section-subtitle" id="validationStatus"></p>
+        <ul id="validationMissingList"></ul>
+
+        <button id="startDesigningBtn" type="button" class="btn btn-primary" disabled>Start Designing</button>
       </div>
     </section>
   </main>
@@ -108,6 +112,7 @@
   <script src="js/app.js" defer></script>
   <script src="js/pricing.js" defer></script>
   <script src="js/summary.js" defer></script>
+  <script src="js/validation.js" defer></script>
   <script src="js/designer.js" defer></script>
 </body>
 </html>
