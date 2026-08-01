@@ -207,7 +207,16 @@ function initStartDesigningButton() {
   const button = document.getElementById("startDesigningBtn");
   if (!button) return;
   button.addEventListener("click", () => {
-    alert("Designer coming soon.");
+    // The button is disabled by refreshValidation() until designerState is
+    // complete, so every property read here is guaranteed to be populated.
+    const params = new URLSearchParams({
+      id: designerState.template.id,
+      cakeSize: designerState.cakeSize.id,
+      flavor: designerState.flavor.id,
+      filling: designerState.filling.id,
+      frosting: designerState.frosting.id,
+    });
+    window.location.href = `order-review.html?${params.toString()}`;
   });
 }
 

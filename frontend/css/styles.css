@@ -577,6 +577,35 @@ h3 {
   text-align: left;
 }
 
+.form-field {
+  margin-top: var(--space-3);
+  text-align: left;
+}
+
+.form-field label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-weight: 600;
+}
+
+.form-field input,
+.form-field textarea {
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  color: var(--color-brown);
+  background: #fff;
+}
+
+.form-field input:focus,
+.form-field textarea:focus {
+  outline: 2px solid var(--color-rose-gold);
+  outline-offset: 2px;
+}
+
 .option-group legend {
   padding-inline: var(--space-1);
   font-family: var(--font-heading);
