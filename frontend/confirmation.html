@@ -17,7 +17,14 @@
 
   <header class="site-header">
     <div class="container site-header__inner">
-      <a class="brand" href="index.html">Maison de Gâteau <span>Paris</span></a>
+      <a class="brand-lockup" href="index.html">
+        <svg class="brand-lockup__mark" viewBox="0 0 32 24" aria-hidden="true" focusable="false">
+          <path d="M4 20 L16 6 L28 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <line x1="16" y1="6" x2="16" y2="1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <span class="brand-lockup__name">Maison de Gâteau</span>
+        <span class="brand-lockup__city">Paris</span>
+      </a>
 
       <button class="nav-toggle" id="navToggle" type="button" aria-expanded="false" aria-controls="siteNav">
         <span class="nav-toggle__bar"></span>
@@ -37,18 +44,26 @@
   </header>
 
   <main id="main">
-    <section class="collections" aria-labelledby="confirmationHeading">
+    <section id="confirmation" class="collections" aria-labelledby="confirmationHeading">
       <div class="container template-detail">
-        <p class="section-title" aria-hidden="true">🎂</p>
-        <h1 id="confirmationHeading" class="section-title">Thank You!</h1>
-        <p class="section-subtitle">Your order has been received successfully.</p>
+        <div class="confirmation-card">
+          <div class="brand-flourish" aria-hidden="true">
+            <span class="brand-flourish__line"></span>
+            <span class="brand-flourish__mark"></span>
+            <span class="brand-flourish__line"></span>
+          </div>
+          <h1 id="confirmationHeading" class="section-title">Thank You!</h1>
+          <p class="section-subtitle">Your order has been received successfully.</p>
 
-        <h2 class="section-title">Order Number</h2>
-        <p class="section-subtitle" id="confirmationOrderId"></p>
+          <div class="order-number-block">
+            <h2 class="section-title">Order Number</h2>
+            <p class="section-subtitle" id="confirmationOrderId"></p>
+          </div>
 
-        <p class="section-subtitle">We'll contact you shortly.</p>
+          <p class="section-subtitle">We'll contact you shortly.</p>
 
-        <a class="btn btn-primary" href="index.html">Back to Home</a>
+          <a class="btn btn-primary" href="index.html">Back to Home</a>
+        </div>
       </div>
     </section>
   </main>

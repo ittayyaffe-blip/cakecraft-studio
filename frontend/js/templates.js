@@ -25,25 +25,50 @@ function navigateToDesigner(templateId) {
   window.location.href = `designer.html?id=${encodeURIComponent(templateId)}`;
 }
 
-function createTemplateCard(template) {
-  const article = document.createElement("article");
-  article.className = "collection-card";
-
+function createTemplateMedia(template) {
   const img = document.createElement("img");
-  img.src = template.preview_image
-    ? `assets/images/${template.preview_image}`
-    : "assets/images/hero-cake.svg";
-
   img.alt = `${template.name} cake template`;
   img.width = 640;
   img.height = 480;
   img.loading = "lazy";
+  img.onerror = () => {
+    img.onerror = null;
+    img.src = "assets/images/hero-cake.svg";
+  };
+
+  if (!template.preview_image) {
+    img.src = "assets/images/hero-cake.svg";
+    return img;
+  }
+
+  // preview_image points at the .webp; the same-named .jpg is the fallback
+  // for browsers without WebP support (generated alongside it).
+  const webpUrl = `assets/images/${template.preview_image}`;
+  const jpgUrl = webpUrl.replace(/\.webp$/, ".jpg");
+
+  const source = document.createElement("source");
+  source.srcset = webpUrl;
+  source.type = "image/webp";
+
+  img.src = jpgUrl;
+
+  const picture = document.createElement("picture");
+  picture.append(source, img);
+  return picture;
+}
+
+function createTemplateCard(template) {
+  const article = document.createElement("article");
+  article.className = "collection-card";
+
+  const media = createTemplateMedia(template);
 
   const title = document.createElement("h3");
   title.textContent = template.name;
 
   const price = document.createElement("p");
-  price.textContent = `Starting at $${template.base_price.toFixed(2)}`;
+  price.className = "template-price";
+  price.textContent = `From $${Math.round(template.base_price)}`;
 
   const button = document.createElement("button");
   button.type = "button";
@@ -54,7 +79,7 @@ function createTemplateCard(template) {
     navigateToDesigner(template.id);
   });
 
-  article.append(img, title, price, button);
+  article.append(media, title, price, button);
 
   return article;
 }

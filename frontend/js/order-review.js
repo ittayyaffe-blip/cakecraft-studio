@@ -29,6 +29,15 @@ function renderOrderReviewLoading() {
 function renderOrderReviewError() {
   const nameEl = document.getElementById("reviewTemplateName");
   if (nameEl) nameEl.textContent = "Unable to load your order. Please return to the Designer.";
+
+  const imageWrapEl = document.getElementById("reviewImageWrap");
+  if (imageWrapEl) imageWrapEl.classList.add("is-hidden");
+
+  const detailsEl = document.getElementById("reviewDetails");
+  if (detailsEl) detailsEl.classList.add("is-hidden");
+
+  const continueBtn = document.getElementById("continueToCustomerInfoBtn");
+  if (continueBtn) continueBtn.classList.add("is-hidden");
 }
 
 // The only function that writes to the Order Review DOM. Everything it

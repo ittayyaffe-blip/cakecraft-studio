@@ -17,7 +17,14 @@
 
   <header class="site-header">
     <div class="container site-header__inner">
-      <a class="brand" href="index.html">Maison de Gâteau <span>Paris</span></a>
+      <a class="brand-lockup" href="index.html">
+        <svg class="brand-lockup__mark" viewBox="0 0 32 24" aria-hidden="true" focusable="false">
+          <path d="M4 20 L16 6 L28 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <line x1="16" y1="6" x2="16" y2="1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <span class="brand-lockup__name">Maison de Gâteau</span>
+        <span class="brand-lockup__city">Paris</span>
+      </a>
 
       <button class="nav-toggle" id="navToggle" type="button" aria-expanded="false" aria-controls="siteNav">
         <span class="nav-toggle__bar"></span>
@@ -37,19 +44,27 @@
   </header>
 
   <main id="main">
-    <section class="collections" aria-labelledby="reviewTemplateName">
+    <section id="order-review" class="collections" aria-labelledby="reviewTemplateName">
       <div class="container template-detail">
-        <div class="collection-card">
+        <div id="reviewImageWrap" class="collection-card">
           <img id="reviewTemplateImage" src="assets/images/hero-cake.svg" alt="Cake" width="640" height="480">
         </div>
 
         <h1 id="reviewTemplateName" class="section-title">Loading your order...</h1>
-        <p class="section-subtitle">Size: <span id="reviewCakeSize"></span></p>
-        <p class="section-subtitle">Flavor: <span id="reviewFlavor"></span></p>
-        <p class="section-subtitle">Filling: <span id="reviewFilling"></span></p>
-        <p class="section-subtitle">Frosting: <span id="reviewFrosting"></span></p>
-        <p class="section-subtitle">Serving range: <span id="reviewServingRange"></span></p>
-        <p class="section-subtitle">Total price: <span id="reviewPrice"></span></p>
+
+        <div id="reviewDetails">
+          <div class="summary-panel">
+            <p class="section-subtitle">Size: <span id="reviewCakeSize"></span></p>
+            <p class="section-subtitle">Flavor: <span id="reviewFlavor"></span></p>
+            <p class="section-subtitle">Filling: <span id="reviewFilling"></span></p>
+            <p class="section-subtitle">Frosting: <span id="reviewFrosting"></span></p>
+            <p class="section-subtitle">Serving range: <span id="reviewServingRange"></span></p>
+          </div>
+
+          <p class="section-subtitle craft-message">Every cake is handcrafted to your exact specifications.</p>
+
+          <p class="section-subtitle price-display">Total price: <span id="reviewPrice"></span></p>
+        </div>
 
         <button id="returnToDesignerBtn" type="button" class="btn btn-small">&larr; Return to Designer</button>
         <button id="continueToCustomerInfoBtn" type="button" class="btn btn-primary" disabled>Continue to Customer Information</button>

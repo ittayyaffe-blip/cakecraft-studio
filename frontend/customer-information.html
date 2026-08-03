@@ -17,7 +17,14 @@
 
   <header class="site-header">
     <div class="container site-header__inner">
-      <a class="brand" href="index.html">Maison de Gâteau <span>Paris</span></a>
+      <a class="brand-lockup" href="index.html">
+        <svg class="brand-lockup__mark" viewBox="0 0 32 24" aria-hidden="true" focusable="false">
+          <path d="M4 20 L16 6 L28 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <line x1="16" y1="6" x2="16" y2="1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <span class="brand-lockup__name">Maison de Gâteau</span>
+        <span class="brand-lockup__city">Paris</span>
+      </a>
 
       <button class="nav-toggle" id="navToggle" type="button" aria-expanded="false" aria-controls="siteNav">
         <span class="nav-toggle__bar"></span>
@@ -37,29 +44,34 @@
   </header>
 
   <main id="main">
-    <section class="collections" aria-labelledby="customerInfoHeading">
+    <section id="customer-info" class="collections" aria-labelledby="customerInfoHeading">
       <div class="container template-detail">
         <h1 id="customerInfoHeading" class="section-title">Customer Information</h1>
+        <p class="section-subtitle intro-message">A few final details before we begin crafting your cake.</p>
 
         <form id="customerInfoForm" novalidate>
-          <div class="form-field">
-            <label for="customerName">Name *</label>
-            <input type="text" id="customerName" name="name" required>
+          <div class="field-group">
+            <div class="form-field">
+              <label for="customerName">Name *</label>
+              <input type="text" id="customerName" name="name" required>
+            </div>
+
+            <div class="form-field">
+              <label for="customerPhone">Phone *</label>
+              <input type="tel" id="customerPhone" name="phone" required>
+            </div>
+
+            <div class="form-field">
+              <label for="customerEmail">Email *</label>
+              <input type="email" id="customerEmail" name="email" required>
+            </div>
           </div>
 
-          <div class="form-field">
-            <label for="customerPhone">Phone *</label>
-            <input type="tel" id="customerPhone" name="phone" required>
-          </div>
-
-          <div class="form-field">
-            <label for="customerEmail">Email *</label>
-            <input type="email" id="customerEmail" name="email" required>
-          </div>
-
-          <div class="form-field">
-            <label for="customerNotes">Notes</label>
-            <textarea id="customerNotes" name="notes" rows="4"></textarea>
+          <div class="field-group">
+            <div class="form-field">
+              <label for="customerNotes">Notes</label>
+              <textarea id="customerNotes" name="notes" rows="4"></textarea>
+            </div>
           </div>
         </form>
 

@@ -38,6 +38,9 @@ function renderTemplateLoading() {
 function renderTemplateError() {
   const nameEl = document.getElementById("templateName");
   if (nameEl) nameEl.textContent = "Unable to load this cake template. Please try again later.";
+
+  const detailsEl = document.getElementById("designerDetails");
+  if (detailsEl) detailsEl.classList.add("is-hidden");
 }
 
 function renderTemplateDetail(template) {
@@ -62,8 +65,14 @@ function renderTemplateDetail(template) {
 function createOptionGroup(legendText, groupName, items) {
   const fieldset = document.createElement("fieldset");
   fieldset.className = "option-group";
+  // <legend> can never be repositioned via CSS (browsers anchor it to the
+  // fieldset border regardless of margin), so the heading is a styled div
+  // instead. aria-label on the fieldset preserves the accessible group name
+  // that <legend> would otherwise have provided.
+  fieldset.setAttribute("aria-label", legendText);
 
-  const legend = document.createElement("legend");
+  const legend = document.createElement("div");
+  legend.className = "option-group__heading";
   legend.textContent = legendText;
   fieldset.appendChild(legend);
 

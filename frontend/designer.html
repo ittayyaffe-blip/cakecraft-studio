@@ -17,7 +17,14 @@
 
   <header class="site-header">
     <div class="container site-header__inner">
-      <a class="brand" href="index.html">Maison de Gâteau <span>Paris</span></a>
+      <a class="brand-lockup" href="index.html">
+        <svg class="brand-lockup__mark" viewBox="0 0 32 24" aria-hidden="true" focusable="false">
+          <path d="M4 20 L16 6 L28 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <line x1="16" y1="6" x2="16" y2="1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <span class="brand-lockup__name">Maison de Gâteau</span>
+        <span class="brand-lockup__city">Paris</span>
+      </a>
 
       <button class="nav-toggle" id="navToggle" type="button" aria-expanded="false" aria-controls="siteNav">
         <span class="nav-toggle__bar"></span>
@@ -37,35 +44,42 @@
   </header>
 
   <main id="main">
-    <section class="collections" aria-labelledby="templateName">
+    <section id="designer" class="collections" aria-labelledby="templateName">
       <div class="container template-detail">
         <div class="collection-card">
           <img id="templateImage" src="assets/images/hero-cake.svg" alt="Cake template" width="640" height="480">
         </div>
 
         <h1 id="templateName" class="section-title">Loading cake template...</h1>
-        <p class="section-subtitle">Collection: <span id="templateCollection"></span></p>
-        <p class="section-subtitle">Style: <span id="templateStyle"></span></p>
-        <p class="section-subtitle">Base price: <span id="templateBasePrice"></span></p>
-        <p class="section-subtitle">Description coming soon.</p>
 
-        <div id="designerOptionsContainer"></div>
+        <div id="designerDetails">
+          <div class="meta-group">
+            <p class="section-subtitle">Collection: <span id="templateCollection"></span></p>
+            <p class="section-subtitle">Style: <span id="templateStyle"></span></p>
+            <p class="section-subtitle">Base price: <span id="templateBasePrice"></span></p>
+          </div>
+          <p class="section-subtitle">Description coming soon.</p>
 
-        <p class="section-subtitle">Current price: <span id="currentPrice"></span></p>
-        <p class="section-subtitle">Serving range: <span id="servingRange"></span></p>
+          <div id="designerOptionsContainer"></div>
 
-        <h2 class="section-title">Order Summary</h2>
-        <p class="section-subtitle">Cake: <span id="summaryTemplateName"></span></p>
-        <p class="section-subtitle">Size: <span id="summaryCakeSize"></span></p>
-        <p class="section-subtitle">Flavor: <span id="summaryFlavor"></span></p>
-        <p class="section-subtitle">Filling: <span id="summaryFilling"></span></p>
-        <p class="section-subtitle">Frosting: <span id="summaryFrosting"></span></p>
+          <p class="section-subtitle price-display">Current price: <span id="currentPrice"></span></p>
+          <p class="section-subtitle">Serving range: <span id="servingRange"></span></p>
 
-        <h2 class="section-title">Order Status</h2>
-        <p class="section-subtitle" id="validationStatus"></p>
-        <ul id="validationMissingList"></ul>
+          <h2 class="section-title">Order Summary</h2>
+          <div class="summary-panel">
+            <p class="section-subtitle">Cake: <span id="summaryTemplateName"></span></p>
+            <p class="section-subtitle">Size: <span id="summaryCakeSize"></span></p>
+            <p class="section-subtitle">Flavor: <span id="summaryFlavor"></span></p>
+            <p class="section-subtitle">Filling: <span id="summaryFilling"></span></p>
+            <p class="section-subtitle">Frosting: <span id="summaryFrosting"></span></p>
+          </div>
 
-        <button id="startDesigningBtn" type="button" class="btn btn-primary" disabled>Start Designing</button>
+          <h2 class="section-title">Order Status</h2>
+          <p class="section-subtitle" id="validationStatus"></p>
+          <ul id="validationMissingList"></ul>
+
+          <button id="startDesigningBtn" type="button" class="btn btn-primary" disabled>Continue to Order Review</button>
+        </div>
       </div>
     </section>
   </main>

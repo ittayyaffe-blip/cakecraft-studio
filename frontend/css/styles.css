@@ -85,6 +85,11 @@ h3 {
   }
 }
 
+/* ---------- Utilities ---------- */
+.is-hidden {
+  display: none !important;
+}
+
 /* ---------- Accessibility helpers ---------- */
 .sr-only {
   position: absolute;
@@ -168,6 +173,29 @@ h3 {
   }
 }
 
+/* Templates gallery only: cards form a centered group instead of a
+   left-aligned grid, so collections with fewer than 5 templates (or more)
+   still center as one row/wrapped block under the heading. Scoped to
+   #templatesGrid so the Home page's 5-item collections grid and the
+   Why Choose Us 3-card grid keep their existing grid layout untouched. */
+#templatesGrid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+#templatesGrid .collection-card {
+  flex: 0 0 220px;
+  max-width: 220px;
+}
+
+@media (max-width: 639px) {
+  #templatesGrid .collection-card {
+    flex-basis: 100%;
+    max-width: 360px;
+  }
+}
+
 /* ---------- Buttons ---------- */
 .btn {
   display: inline-block;
@@ -189,6 +217,18 @@ h3 {
 .btn-primary:focus-visible {
   background: var(--color-gold-light);
   transform: translateY(-2px);
+}
+
+.btn-primary:disabled {
+  filter: saturate(0.5) brightness(0.97);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary:disabled:hover,
+.btn-primary:disabled:focus-visible {
+  background: var(--color-gold);
+  transform: none;
 }
 
 .btn-small {
@@ -231,6 +271,41 @@ h3 {
 
 .brand span {
   color: var(--color-rose-gold);
+}
+
+/* Header logo lockup — replaces the plain text .brand link in the site
+   header only. .brand / .brand--footer stay untouched for the footer. */
+.brand-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  text-decoration: none;
+  line-height: 1.1;
+}
+
+.brand-lockup__mark {
+  width: 22px;
+  height: 17px;
+  color: var(--color-gold);
+}
+
+.brand-lockup__name {
+  font-family: var(--font-heading);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-brown);
+  white-space: nowrap;
+}
+
+.brand-lockup__city {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--color-gold);
 }
 
 .nav-toggle {
@@ -318,12 +393,32 @@ h3 {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  /* The cake sits right-of-center in the source photo; bias the crop
+     toward it so it stays in frame on tall/narrow viewports. */
+  object-position: 72% 48%;
 }
 
+/* Mobile: text spans nearly the full width, so keep a even, moderate
+   tint for legibility across the whole image. */
 .hero__scrim {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(46, 29, 20, 0.55), rgba(46, 29, 20, 0.75));
+  background: linear-gradient(180deg, rgba(46, 29, 20, 0.68) 0%, rgba(46, 29, 20, 0.55) 100%);
+}
+
+/* Desktop/tablet: the text column is narrow and sits on the left, so
+   the overlay only needs to darken that side — the cake on the right
+   stays essentially untouched, per the photograph. */
+@media (min-width: 860px) {
+  .hero__scrim {
+    background: linear-gradient(
+      90deg,
+      rgba(46, 29, 20, 0.66) 0%,
+      rgba(46, 29, 20, 0.48) 40%,
+      rgba(46, 29, 20, 0.14) 65%,
+      rgba(46, 29, 20, 0) 82%
+    );
+  }
 }
 
 .hero__content {
@@ -333,19 +428,38 @@ h3 {
 }
 
 .hero__title {
-  font-size: clamp(2.25rem, 1.7rem + 2.5vw, 3.75rem);
-  line-height: 1.15;
+  font-size: clamp(2.5rem, 1.85rem + 3vw, 4.25rem);
+  line-height: 1.12;
+  letter-spacing: -0.01em;
   color: var(--color-ivory);
 }
 
+.hero__title::after {
+  content: "";
+  display: block;
+  width: 72px;
+  height: 3px;
+  margin-top: var(--space-3);
+  background: var(--color-gold);
+}
+
 .hero__subtitle {
-  margin-top: var(--space-2);
-  font-size: clamp(1rem, 0.95rem + 0.3vw, 1.25rem);
+  margin-top: var(--space-3);
+  font-size: clamp(1.05rem, 1rem + 0.3vw, 1.3rem);
   color: var(--color-ivory-dark);
 }
 
 .hero .btn-primary {
   margin-top: var(--space-4);
+  padding: 1.1rem 2.75rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  box-shadow: 0 16px 34px -14px rgba(198, 161, 91, 0.6);
+}
+
+.hero .btn-primary:hover,
+.hero .btn-primary:focus-visible {
+  box-shadow: 0 20px 40px -14px rgba(198, 161, 91, 0.7);
 }
 
 /* ---------- Collections ---------- */
@@ -383,6 +497,10 @@ h3 {
   object-fit: cover;
 }
 
+.collection-card picture {
+  display: block;
+}
+
 .collection-card h3,
 .collection-card p {
   padding-inline: var(--space-2);
@@ -399,15 +517,87 @@ h3 {
   color: var(--color-brown-soft);
 }
 
+/* Templates gallery only: a quieter price treatment so the cake name and
+   photography stay the dominant elements on each card. */
+.collection-card .template-price {
+  font-size: 0.75rem;
+  color: var(--color-gold);
+}
+
+/* ---------- Collections — landing page only (#collections scopes these
+   so the shared .collection-card / .card-grid--five rules above stay
+   untouched on Templates, Designer, and Order Review) ---------- */
+#collections .section-title {
+  font-size: clamp(2rem, 1.6rem + 1.8vw, 2.75rem);
+}
+
+#collections .section-title::after {
+  content: "";
+  display: block;
+  width: 64px;
+  height: 2px;
+  margin: var(--space-2) auto 0;
+  background: var(--color-gold);
+}
+
+#collections .card-grid--five {
+  margin-top: var(--space-5);
+}
+
+#collections .collection-card {
+  box-shadow: 0 24px 48px -24px rgba(46, 29, 20, 0.3);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+#collections .collection-card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 32px 56px -20px rgba(46, 29, 20, 0.35);
+}
+
+#collections .collection-card img {
+  transition: transform 0.4s ease;
+}
+
+#collections .collection-card:hover img {
+  transform: scale(1.03);
+}
+
+#collections .collection-card h3 {
+  font-size: 1.3rem;
+}
+
+#collections .collection-card p {
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
 /* ---------- Why Choose Us ---------- */
 .why-us {
   padding-block: var(--space-6);
   background: var(--color-ivory-dark);
 }
 
+.why-us .section-title {
+  font-size: clamp(2rem, 1.6rem + 1.8vw, 2.75rem);
+}
+
+.why-us .section-title::after {
+  content: "";
+  display: block;
+  width: 64px;
+  height: 2px;
+  margin: var(--space-2) auto 0;
+  background: var(--color-gold);
+}
+
 .feature-card {
   text-align: center;
   padding: var(--space-4) var(--space-2);
+  transition: transform 0.3s ease;
+}
+
+.feature-card:hover {
+  transform: translateY(-4px);
 }
 
 .feature-card__icon {
@@ -417,9 +607,10 @@ h3 {
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: var(--color-ivory);
+  background: linear-gradient(160deg, var(--color-ivory) 0%, var(--color-ivory-dark) 100%);
   color: var(--color-gold);
-  border: 1px solid var(--color-gold);
+  border: 1px solid var(--color-gold-light);
+  box-shadow: 0 12px 24px -14px rgba(198, 161, 91, 0.5);
 }
 
 .feature-card__icon svg {
@@ -428,8 +619,8 @@ h3 {
 }
 
 .feature-card h3 {
-  margin-top: var(--space-2);
-  font-size: 1.15rem;
+  margin-top: var(--space-3);
+  font-size: 1.25rem;
 }
 
 .feature-card p {
@@ -440,6 +631,19 @@ h3 {
 /* ---------- How It Works ---------- */
 .how-it-works {
   padding-block: var(--space-6);
+}
+
+.how-it-works .section-title {
+  font-size: clamp(2rem, 1.6rem + 1.8vw, 2.75rem);
+}
+
+.how-it-works .section-title::after {
+  content: "";
+  display: block;
+  width: 64px;
+  height: 2px;
+  margin: var(--space-2) auto 0;
+  background: var(--color-gold);
 }
 
 .steps {
@@ -465,15 +669,16 @@ h3 {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: var(--color-brown);
+  background: linear-gradient(160deg, var(--color-brown) 0%, var(--color-brown-soft) 100%);
   color: var(--color-gold-light);
   font-family: var(--font-heading);
   font-size: 1.25rem;
+  box-shadow: 0 12px 22px -12px rgba(46, 29, 20, 0.55);
 }
 
 .step h3 {
-  margin-top: var(--space-2);
-  font-size: 1.15rem;
+  margin-top: var(--space-3);
+  font-size: 1.2rem;
 }
 
 .step p {
@@ -570,50 +775,429 @@ h3 {
 }
 
 .option-group {
-  margin-top: var(--space-3);
-  padding: var(--space-3);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  background: #fff;
   border: 1px solid var(--color-ivory-dark);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
   text-align: left;
 }
 
+.option-group input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.option-group label {
+  position: relative;
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: 999px;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.option-group label:hover {
+  border-color: var(--color-gold-light);
+  background: var(--color-ivory);
+}
+
+.option-group label:has(input:checked) {
+  background: var(--color-gold);
+  border-color: var(--color-gold);
+  color: var(--color-brown);
+  font-weight: 600;
+}
+
+.option-group label:has(input:focus-visible) {
+  outline: 2px solid var(--color-rose-gold);
+  outline-offset: 2px;
+}
+
 .form-field {
-  margin-top: var(--space-3);
+  margin-top: var(--space-4);
   text-align: left;
 }
 
 .form-field label {
   display: block;
-  margin-bottom: var(--space-1);
+  margin-bottom: var(--space-2);
+  font-size: 0.8rem;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-brown-soft);
 }
 
 .form-field input,
 .form-field textarea {
   width: 100%;
-  padding: 0.6rem 0.8rem;
+  padding: 0.9rem 1.1rem;
   border: 1px solid var(--color-ivory-dark);
   border-radius: var(--radius);
   font-family: var(--font-body);
-  font-size: 1rem;
+  font-size: 1.05rem;
   color: var(--color-brown);
   background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .form-field input:focus,
 .form-field textarea:focus {
-  outline: 2px solid var(--color-rose-gold);
-  outline-offset: 2px;
+  outline: none;
+  border-color: var(--color-rose-gold);
+  box-shadow: 0 0 0 3px rgba(183, 110, 121, 0.18);
 }
 
-.option-group legend {
+.option-group .option-group__heading {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: calc(var(--space-2) * -1);
   padding-inline: var(--space-1);
   font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: clamp(1.375rem, 1.2rem + 0.8vw, 1.5rem);
+  letter-spacing: 0.01em;
+  color: var(--color-brown);
+  margin-bottom: var(--space-1);
+}
+
+.option-group .option-group__heading::before {
+  color: var(--color-gold);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+#designerOptionsContainer fieldset:nth-of-type(1) .option-group__heading::before {
+  content: "\25CE";
+}
+
+#designerOptionsContainer fieldset:nth-of-type(2) .option-group__heading::before {
+  content: "\2740";
+}
+
+#designerOptionsContainer fieldset:nth-of-type(3) .option-group__heading::before {
+  content: "\2261";
+}
+
+#designerOptionsContainer fieldset:nth-of-type(4) .option-group__heading::before {
+  content: "\2248";
+}
+
+.option-group label {
+  padding: 0.55rem 1.1rem;
+}
+
+/* #designer scopes the shared .collection-card / .section-subtitle rules
+   below so Templates, Order Review, and Confirmation stay untouched. */
+#designer .template-detail {
+  max-width: 760px;
+}
+
+#designer .collection-card {
+  max-width: 560px;
+  margin: 0 auto var(--space-4);
+  border: 1px solid var(--color-gold-light);
+}
+
+#templateName {
+  font-size: clamp(2rem, 1.6rem + 2vw, 2.625rem);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-2);
+}
+
+#designer .meta-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-2);
+}
+
+#designer .meta-group p {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+#designer .price-display {
+  margin-top: var(--space-5);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-brown-soft);
+}
+
+#designer .price-display span {
+  display: block;
+  margin-top: var(--space-2);
+  font-family: var(--font-heading);
+  font-size: clamp(2.5rem, 1.9rem + 3vw, 3.5rem);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: var(--color-gold);
+}
+
+#designer h2.section-title {
+  margin-top: var(--space-6);
+  margin-bottom: var(--space-1);
+}
+
+#designer .summary-panel {
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-ivory-dark);
+  border: 1px solid var(--color-gold-light);
+  border-radius: var(--radius);
+}
+
+#designer .summary-panel p {
+  margin: 0;
+  max-width: none;
+  padding: 0.85rem 0;
+  text-align: left;
+  border-bottom: 1px dashed var(--color-gold-light);
+}
+
+#designer .summary-panel p:last-child {
+  border-bottom: none;
+}
+
+#designer .summary-panel span {
   font-weight: 600;
   color: var(--color-brown);
 }
 
-.option-group label {
-  display: block;
+#designer #validationStatus {
+  font-size: 1.05rem;
   margin-top: var(--space-1);
+}
+
+#designer #validationMissingList {
+  list-style: none;
+  padding: 0;
+  margin-top: var(--space-2);
+  text-align: center;
+}
+
+#designer #validationMissingList li {
+  color: var(--color-brown-soft);
+  font-size: 0.9rem;
+  padding: 0.3rem 0;
+}
+
+#designer #startDesigningBtn {
+  width: min(100%, 360px);
+  padding: 1.1rem 2.5rem;
+  margin-top: var(--space-5);
+  font-size: 1.05rem;
+  letter-spacing: 0.03em;
+}
+
+/* ---------- Order Review (order-review.html) ----------
+   #order-review scopes every rule below so Designer, Templates, and
+   Customer Information keep their own independent styling. */
+#order-review .template-detail {
+  max-width: 700px;
+}
+
+#order-review .collection-card {
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--color-gold-light);
+}
+
+#reviewTemplateName {
+  font-size: clamp(2rem, 1.6rem + 2vw, 2.625rem);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin-top: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+#order-review .summary-panel {
+  margin-top: var(--space-2);
+  padding: var(--space-4);
+  background: var(--color-ivory-dark);
+  border: 1px solid var(--color-gold-light);
+  border-radius: var(--radius);
+}
+
+#order-review .summary-panel p {
+  margin: 0;
+  max-width: none;
+  padding: 0.85rem 0;
+  text-align: left;
+  border-bottom: 1px dashed var(--color-gold-light);
+}
+
+#order-review .summary-panel p:last-child {
+  border-bottom: none;
+}
+
+#order-review .summary-panel span {
+  font-weight: 600;
+  color: var(--color-brown);
+}
+
+#order-review .craft-message {
+  margin-top: var(--space-4);
+}
+
+#order-review .price-display {
+  margin-top: var(--space-5);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-brown-soft);
+}
+
+#order-review .price-display span {
+  display: block;
+  margin-top: var(--space-2);
+  font-family: var(--font-heading);
+  font-size: clamp(2.5rem, 1.9rem + 3vw, 3.5rem);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--color-gold);
+}
+
+#order-review .template-detail .btn {
+  margin-top: var(--space-5);
+}
+
+#order-review #continueToCustomerInfoBtn {
+  padding: 1.1rem 2.5rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.03em;
+}
+
+/* ---------- Customer Information (customer-information.html) ----------
+   #customer-info scopes every rule below so Designer, Order Review, and
+   Confirmation keep their own independent styling. */
+#customer-info .template-detail {
+  max-width: 700px;
+}
+
+#customerInfoHeading {
+  font-size: clamp(2rem, 1.6rem + 2vw, 2.625rem);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin-bottom: 0;
+}
+
+#customer-info .intro-message {
+  margin-bottom: var(--space-4);
+}
+
+#customer-info .field-group {
+  padding: var(--space-4);
+  background: #fff;
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+}
+
+#customer-info .field-group + .field-group {
+  margin-top: var(--space-4);
+}
+
+#customer-info .field-group .form-field:first-child {
+  margin-top: 0;
+}
+
+#customer-info .template-detail .btn {
+  margin-top: var(--space-5);
+}
+
+#customer-info #submitOrderBtn {
+  padding: 1.1rem 2.5rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.03em;
+}
+
+/* ---------- Order Confirmation (confirmation.html) ----------
+   #confirmation scopes every rule below so every other page keeps its
+   own independent styling. */
+#confirmation .confirmation-card {
+  margin-top: var(--space-4);
+  padding: var(--space-5) var(--space-4);
+  background: #fff;
+  border: 1px solid var(--color-gold-light);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+}
+
+#confirmation .brand-flourish {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+#confirmation .brand-flourish__line {
+  width: 56px;
+  height: 1px;
+  background: var(--color-gold);
+}
+
+#confirmation .brand-flourish__mark {
+  width: 9px;
+  height: 9px;
+  background: var(--color-gold);
+  transform: rotate(45deg);
+}
+
+#confirmationHeading {
+  font-size: clamp(2rem, 1.6rem + 2vw, 2.625rem);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin-bottom: var(--space-2);
+}
+
+#confirmation .order-number-block {
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  background: var(--color-ivory-dark);
+  border: 1px solid var(--color-gold-light);
+  border-radius: var(--radius);
+}
+
+#confirmation .order-number-block h2 {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-brown-soft);
+}
+
+#confirmationOrderId {
+  margin-top: var(--space-2);
+  font-family: var(--font-heading);
+  font-size: clamp(1.375rem, 1.15rem + 1vw, 1.75rem);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--color-gold);
+  word-break: break-all;
+}
+
+#confirmation .confirmation-card > p:last-of-type {
+  margin-top: var(--space-4);
+}
+
+#confirmation .btn-primary {
+  margin-top: var(--space-5);
+  padding: 1.1rem 2.5rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.03em;
 }
