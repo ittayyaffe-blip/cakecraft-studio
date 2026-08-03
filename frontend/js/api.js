@@ -4,7 +4,7 @@
 // localhost/127.0.0.1 for desktop dev, and automatically targets the
 // right LAN IP (e.g. http://192.168.1.140:8000) when the frontend is
 // opened from another device, as long as the backend is reachable there.
-const API_BASE_URL = `http://${window.location.hostname}:8000`;
+const API_BASE_URL = "https://web-production-c9dd99.up.railway.app";
 
 async function getCollections() {
   const response = await fetch(`${API_BASE_URL}/collections`);
