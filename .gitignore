@@ -2,6 +2,11 @@
 node_modules/
 npm-debug.log*
 
+# CatBoost's own training-log side effect, written to the current working
+# directory whenever tools/evaluate_forecast_models.py is re-run — not a
+# project artifact, just noise from the one-time model comparison.
+catboost_info/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

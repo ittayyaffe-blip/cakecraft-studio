@@ -1,0 +1,101 @@
+"""Static notification templates — Event-Driven Customer Communication
+Platform (see docs/SPRINT1_EVENT_DRIVEN_COMMUNICATION.md).
+
+One template per order status that's actually customer-relevant — not
+every status transition needs a message (nothing here notifies on a
+transition to `pending`; the confirmation page already covers "we got
+your order" at creation time, which doesn't go through this engine at
+all).
+
+`render()` is deterministic string substitution today. It is the single,
+deliberate seam a future AI-assisted drafting step
+(`docs/Bakery_Command_Center_UX_Product_Blueprint_v1.md` §11's "Message
+draft assistant") is designed to replace: `notification_service.py` only
+ever calls `get_template_for_status` + `render`, never touches template
+text itself, so swapping this function's implementation later — e.g. for
+an LLM call grounded in the same order/customer context — changes nothing
+about creation, approval, or sending.
+"""
+
+# Keyed by `orders.status` (the real, existing 6-value enum — see
+# order_service.ORDER_STATUSES). `event` is the semantic name stored on
+# the notification row; it's intentionally decoupled from the order
+# status string so a future, more granular production stage (e.g. a
+# "Decorating Started" sub-stage that doesn't exist as an order status
+# today) could add its own entry here without those two vocabularies
+# needing to match 1:1.
+ORDER_STATUS_EVENT_TEMPLATES = {
+    "confirmed": {
+        "event": "order_confirmed",
+        "label": "Order Confirmed",
+        "subject": "Your order has been confirmed!",
+        "body": (
+            "Hi {customer_name}, great news — your order for {template_name} has "
+            "been confirmed. We'll keep you posted as we bring it to life."
+        ),
+    },
+    "in_progress": {
+        "event": "baking_started",
+        "label": "Baking Started",
+        "subject": "We've started working on your cake!",
+        "body": (
+            "Hi {customer_name}, our bakers have started on your {template_name}. "
+            "It's in good hands!"
+        ),
+    },
+    "ready": {
+        "event": "ready_for_pickup",
+        "label": "Ready for Pickup",
+        "subject": "Your cake is ready for pickup!",
+        "body": (
+            "Hi {customer_name}, your {template_name} is ready whenever you are. "
+            "See you soon!"
+        ),
+    },
+    "completed": {
+        "event": "order_completed",
+        "label": "Completed",
+        "subject": "Thank you for your order!",
+        "body": (
+            "Hi {customer_name}, thank you for choosing Maison de Gâteau Paris for "
+            "your {template_name}. We hope you loved it!"
+        ),
+    },
+    "cancelled": {
+        "event": "order_cancelled",
+        "label": "Order Cancelled",
+        "subject": "Your order has been cancelled",
+        "body": (
+            "Hi {customer_name}, your order for {template_name} has been "
+            "cancelled. Reach out any time if you have questions."
+        ),
+    },
+}
+
+# event key -> human label, e.g. for the Customer Timeline
+# (customer_service.get_customer_timeline) to describe a notification
+# entry without needing to know the templates dict's shape.
+EVENT_LABELS = {t["event"]: t["label"] for t in ORDER_STATUS_EVENT_TEMPLATES.values()}
+
+
+def get_template_for_status(order_status: str) -> dict | None:
+    """The template for one order status, or None if that status has no
+    customer-relevant message."""
+    return ORDER_STATUS_EVENT_TEMPLATES.get(order_status)
+
+
+def render(template: dict, order: dict) -> dict:
+    """Fill a template's subject/body placeholders from an order (and its
+    joined customer/template — see order_service._ORDER_DETAIL_SELECT,
+    the same embedded shape this expects).
+    """
+    customer = order.get("customers") or {}
+    cake_template = order.get("cake_templates") or {}
+
+    return {
+        "subject": template["subject"],
+        "body": template["body"].format(
+            customer_name=customer.get("name") or "there",
+            template_name=cake_template.get("name") or "your cake",
+        ),
+    }

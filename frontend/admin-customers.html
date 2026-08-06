@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Customers | Backoffice | Maison de Gâteau Paris</title>
+  <meta name="robots" content="noindex, nofollow">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="admin-shell" id="admin-customers">
+    <aside class="admin-sidebar" id="adminSidebar">
+      <a class="admin-sidebar__brand" href="admin-dashboard.html">
+        <svg class="brand-lockup__mark" viewBox="0 0 32 24" aria-hidden="true" focusable="false">
+          <path d="M4 20 L16 6 L28 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <line x1="16" y1="6" x2="16" y2="1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <span>Backoffice</span>
+      </a>
+
+      <nav class="admin-sidebar__nav" aria-label="Backoffice">
+        <a class="admin-nav-link" href="admin-dashboard.html">Dashboard</a>
+        <a class="admin-nav-link" href="admin-orders.html">Orders</a>
+        <a class="admin-nav-link" href="admin-customers.html">Customers</a>
+        <a class="admin-nav-link" href="admin-notifications.html">Notifications</a>
+      </nav>
+    </aside>
+
+    <div class="admin-main">
+      <header class="admin-topbar">
+        <button class="admin-sidebar-toggle" id="adminSidebarToggle" type="button" aria-expanded="false" aria-controls="adminSidebar">
+          <span class="sr-only">Toggle menu</span>
+          <span aria-hidden="true">&#9776;</span>
+        </button>
+        <h1 class="admin-topbar__title">Customers</h1>
+        <div class="admin-topbar__account">
+          <span class="admin-topbar__who" id="adminWho"></span>
+          <button class="btn btn-small" id="adminLogoutBtn" type="button">Log out</button>
+        </div>
+      </header>
+
+      <main class="admin-content">
+        <form class="admin-search-form" id="customersFilterForm" role="search">
+          <input type="search" id="customersSearchInput" name="search" placeholder="Search by name, email, or phone" aria-label="Search customers">
+          <button type="submit" class="btn btn-small">Search</button>
+        </form>
+
+        <div id="customersTableContainer"></div>
+
+        <div class="admin-pagination">
+          <button type="button" class="btn btn-small" id="customersPrevPage">&larr; Previous</button>
+          <span id="customersPageInfo"></span>
+          <button type="button" class="btn btn-small" id="customersNextPage">Next &rarr;</button>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="js/api.js" defer></script>
+  <script src="js/admin/auth.js" defer></script>
+  <script src="js/admin/admin-api.js" defer></script>
+  <script src="js/admin/ui-helpers.js" defer></script>
+  <script src="js/admin/admin-layout.js" defer></script>
+  <script src="js/admin/admin-customers.js" defer></script>
+</body>
+</html>

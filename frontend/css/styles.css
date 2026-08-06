@@ -1201,3 +1201,1047 @@ h3 {
   font-size: 1.05rem;
   letter-spacing: 0.03em;
 }
+
+/* =========================================================
+   Admin Backoffice
+   Scoped to .admin-shell / .admin-login-page so none of this
+   can leak into the customer-facing pages above, matching the
+   #id-prefix scoping convention used throughout this file.
+   ========================================================= */
+
+/* ---------- Login page ---------- */
+.admin-login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3);
+  background: var(--color-ivory);
+}
+
+.admin-login-card {
+  width: 100%;
+  max-width: 380px;
+  background: #fff;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+  padding: var(--space-4);
+  text-align: center;
+}
+
+.admin-login-card__eyebrow {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--color-brown-soft);
+  margin: 0;
+}
+
+.admin-login-card__title {
+  font-family: var(--font-heading);
+  font-size: 1.75rem;
+  margin: var(--space-1) 0 var(--space-2);
+}
+
+.admin-login-card form {
+  margin-top: var(--space-3);
+  text-align: left;
+}
+
+.admin-login-card .btn-primary {
+  width: 100%;
+  margin-top: var(--space-3);
+}
+
+/* ---------- Shell layout ---------- */
+.admin-shell {
+  min-height: 100vh;
+  background: var(--color-ivory-dark);
+}
+
+.admin-sidebar {
+  position: fixed;
+  inset-block: 0;
+  left: 0;
+  width: 240px;
+  transform: translateX(-100%);
+  transition: transform 0.2s ease;
+  background: var(--color-brown);
+  color: var(--color-ivory);
+  padding: var(--space-3) var(--space-2);
+  z-index: 60;
+  overflow-y: auto;
+}
+
+.admin-sidebar.is-open {
+  transform: translateX(0);
+}
+
+.admin-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-ivory);
+  text-decoration: none;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 1.1rem;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid rgba(251, 247, 240, 0.15);
+  margin-bottom: var(--space-2);
+}
+
+.admin-sidebar__brand svg {
+  width: 22px;
+  height: 18px;
+}
+
+.admin-sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.admin-nav-link {
+  display: block;
+  padding: 0.7rem 0.9rem;
+  border-radius: var(--radius);
+  color: rgba(251, 247, 240, 0.85);
+  text-decoration: none;
+  font-weight: 500;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.admin-nav-link:hover,
+.admin-nav-link:focus-visible {
+  background: rgba(251, 247, 240, 0.1);
+  color: var(--color-ivory);
+}
+
+.admin-nav-link.is-active {
+  background: var(--color-gold);
+  color: var(--color-brown);
+  font-weight: 600;
+}
+
+.admin-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: #fff;
+  border-bottom: 1px solid var(--color-ivory-dark);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+
+.admin-sidebar-toggle {
+  border: none;
+  background: transparent;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--color-brown);
+  padding: 0.4rem;
+}
+
+.admin-topbar__title {
+  font-family: var(--font-heading);
+  font-size: 1.25rem;
+  flex: 1;
+}
+
+.admin-topbar__account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.admin-topbar__who {
+  font-size: 0.85rem;
+  color: var(--color-brown-soft);
+  display: none;
+}
+
+.admin-content {
+  padding: var(--space-3);
+}
+
+@media (min-width: 860px) {
+  .admin-shell {
+    display: flex;
+  }
+
+  .admin-sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    transform: none;
+  }
+
+  .admin-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .admin-sidebar-toggle {
+    display: none;
+  }
+
+  .admin-topbar__who {
+    display: inline;
+  }
+
+  .admin-content {
+    padding: var(--space-4);
+  }
+}
+
+/* ---------- AI Daily Briefing (Final AI Intelligence Phase) ----------
+   The dashboard's centerpiece — visually distinct from the plain white
+   .admin-card/.admin-panel components via the gold-gradient header
+   treatment, echoing the gold accent already used for CTAs/highlights
+   elsewhere rather than introducing a new color. */
+.admin-briefing {
+  background: #fff;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+  border: 1px solid var(--color-gold-light);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.admin-briefing__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.admin-briefing__header h2 {
+  font-family: var(--font-heading);
+  font-size: 1.3rem;
+  color: var(--color-brown);
+}
+
+.admin-briefing__generated {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: var(--color-brown-soft);
+}
+
+.admin-briefing__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.admin-briefing__stat {
+  background: var(--color-ivory);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+}
+
+.admin-briefing__stat-label {
+  margin: 0;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-brown-soft);
+}
+
+.admin-briefing__stat-value {
+  margin: 0.3rem 0 0;
+  font-family: var(--font-heading);
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--color-brown);
+}
+
+.admin-briefing__forecast {
+  background: var(--color-ivory);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.admin-briefing__forecast h3 {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  color: var(--color-brown);
+}
+
+.admin-briefing__forecast-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: var(--space-2);
+}
+
+.admin-briefing__forecast-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.admin-briefing__forecast-metric-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-brown-soft);
+}
+
+.admin-briefing__forecast-metric-value {
+  font-family: var(--font-heading);
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--color-brown);
+}
+
+.admin-briefing__reason {
+  margin: var(--space-2) 0 0;
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--color-gold-light);
+  font-size: 0.88rem;
+  color: var(--color-brown-soft);
+  font-style: italic;
+}
+
+.admin-briefing__section {
+  margin-bottom: var(--space-3);
+}
+
+.admin-briefing__section:last-child {
+  margin-bottom: 0;
+}
+
+.admin-briefing__section h3 {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  color: var(--color-brown);
+}
+
+.admin-briefing__priority-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.admin-briefing__priority-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  background: var(--color-ivory);
+  cursor: pointer;
+}
+
+.admin-briefing__priority-item:hover,
+.admin-briefing__priority-item:focus-visible {
+  background: var(--color-ivory-dark);
+}
+
+.admin-briefing__priority-title {
+  display: block;
+  font-weight: 600;
+  color: var(--color-brown);
+}
+
+.admin-briefing__priority-reason {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--color-brown-soft);
+}
+
+.admin-briefing__actions {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--color-brown-soft);
+}
+
+.admin-briefing__actions li {
+  margin-bottom: 0.4rem;
+}
+
+.status-badge--workload-low {
+  background: #e6f2ea;
+  color: #2c7a49;
+}
+
+.status-badge--workload-moderate {
+  background: #e3edf7;
+  color: #2b5788;
+}
+
+.status-badge--workload-high {
+  background: #f3ebdc;
+  color: #7a5a2e;
+}
+
+.status-badge--workload-very_high {
+  background: #f7e3e3;
+  color: #a13a3a;
+}
+
+/* ---------- AI Operations Agent + RAG (Business Intelligence Layer) ---------- */
+.admin-agent-briefing {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--color-gold-light);
+}
+
+.admin-agent-briefing h3 {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  color: var(--color-brown);
+}
+
+.admin-agent-briefing__narrative {
+  margin: 0 0 var(--space-2);
+  color: var(--color-brown);
+  line-height: 1.5;
+}
+
+.admin-agent-briefing__notes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.admin-agent-briefing__note {
+  background: var(--color-ivory);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+}
+
+.admin-agent-briefing__note-label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-brown-soft);
+  margin-bottom: 0.3rem;
+}
+
+.admin-agent-briefing__note p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--color-brown);
+}
+
+.admin-agent-briefing__sources {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--color-brown-soft);
+  font-style: italic;
+}
+
+.admin-agent-ask-form {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.admin-agent-ask-form input[type="text"] {
+  flex: 1 1 auto;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+}
+
+.admin-agent-ask-answer {
+  margin: 0 0 var(--space-1);
+  padding: var(--space-2);
+  background: var(--color-ivory);
+  border-radius: var(--radius);
+  color: var(--color-brown);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* ---------- Cards ---------- */
+.admin-cards-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+@media (min-width: 640px) {
+  .admin-cards-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .admin-cards-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .admin-card--wide {
+    grid-column: span 2;
+  }
+}
+
+.admin-card {
+  background: #fff;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+  padding: var(--space-3);
+}
+
+.admin-card__label {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-brown-soft);
+}
+
+.admin-card__value {
+  margin: var(--space-1) 0 0;
+  font-family: var(--font-heading);
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--color-brown);
+}
+
+.admin-card--placeholder {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: repeating-linear-gradient(
+    135deg,
+    var(--color-ivory-dark),
+    var(--color-ivory-dark) 10px,
+    #fff 10px,
+    #fff 20px
+  );
+  border: 1px dashed var(--color-gold);
+}
+
+.admin-card__placeholder-text {
+  margin: var(--space-1) 0 0;
+  color: var(--color-brown-soft);
+  font-size: 0.9rem;
+}
+
+.admin-status-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.admin-status-breakdown__row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.admin-status-breakdown__count {
+  font-weight: 600;
+  color: var(--color-brown);
+}
+
+/* ---------- Panels ---------- */
+.admin-panels-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+}
+
+@media (min-width: 1024px) {
+  .admin-panels-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.admin-panel {
+  background: #fff;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+  padding: var(--space-3);
+}
+
+.admin-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.admin-panel__header h2 {
+  font-family: var(--font-heading);
+  font-size: 1.1rem;
+}
+
+.admin-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+/* ---------- Tables ---------- */
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 0.65rem 0.5rem;
+  border-bottom: 1px solid var(--color-ivory-dark);
+}
+
+.admin-table th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-brown-soft);
+}
+
+.admin-table__row--clickable {
+  cursor: pointer;
+}
+
+.admin-table__row--clickable:hover,
+.admin-table__row--clickable:focus-visible {
+  background: var(--color-ivory-dark);
+}
+
+/* ---------- Status badges ---------- */
+.status-badge {
+  display: inline-block;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.status-badge--pending {
+  background: #f3ebdc;
+  color: #7a5a2e;
+}
+
+.status-badge--confirmed {
+  background: #e3edf7;
+  color: #2b5788;
+}
+
+.status-badge--in_progress {
+  background: #eee3f7;
+  color: #6a3b96;
+}
+
+.status-badge--ready {
+  background: #e6f2ea;
+  color: #2c7a49;
+}
+
+.status-badge--completed {
+  background: var(--color-gold-light);
+  color: var(--color-brown);
+}
+
+.status-badge--cancelled {
+  background: #f7e3e3;
+  color: #a13a3a;
+}
+
+/* ---------- Loading / error / empty states ---------- */
+.admin-state {
+  padding: var(--space-3);
+  text-align: center;
+  color: var(--color-brown-soft);
+}
+
+.admin-state--error {
+  color: #a13a3a;
+}
+
+/* ---------- Search / filters ---------- */
+.admin-search-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.admin-search-form input[type="search"] {
+  flex: 1 1 240px;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+}
+
+.admin-search-form select {
+  padding: 0.65rem 0.9rem;
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  background: #fff;
+}
+
+/* ---------- Pagination ---------- */
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.admin-pagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------- Audit list ---------- */
+.admin-audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.admin-audit-list li {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--color-ivory-dark);
+}
+
+.admin-audit-list li:last-child {
+  border-bottom: none;
+}
+
+.admin-audit-list__action {
+  font-weight: 600;
+  color: var(--color-brown);
+}
+
+.admin-audit-list__meta {
+  font-size: 0.8rem;
+  color: var(--color-brown-soft);
+}
+
+/* ---------- System health ---------- */
+.admin-health-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-1);
+}
+
+@media (min-width: 640px) {
+  .admin-health-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.admin-health-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+}
+
+.admin-health-item__label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-brown-soft);
+}
+
+.admin-health-item__status {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.admin-health-item__status--healthy,
+.admin-health-item__status--running,
+.admin-health-item__status--known {
+  color: #2c7a49;
+}
+
+.admin-health-item__status--unreachable,
+.admin-health-item__status--unknown,
+.admin-health-item__status--not_configured,
+.admin-health-item__status--unavailable {
+  color: var(--color-brown-soft);
+}
+
+.admin-health-item__detail {
+  font-size: 0.8rem;
+  color: var(--color-brown-soft);
+}
+
+/* ---------- Order detail drawer ---------- */
+.admin-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(46, 29, 20, 0.4);
+  z-index: 70;
+}
+
+.admin-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  max-width: 420px;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+  z-index: 80;
+  overflow-y: auto;
+  padding: var(--space-3);
+}
+
+.admin-drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.admin-drawer__header h2 {
+  font-family: var(--font-heading);
+  font-size: 1.2rem;
+}
+
+.admin-drawer__close {
+  border: none;
+  background: transparent;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--color-brown-soft);
+}
+
+.admin-drawer__section-heading {
+  font-family: var(--font-heading);
+  font-size: 1rem;
+  margin-top: var(--space-3);
+  margin-bottom: var(--space-1);
+}
+
+.admin-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--color-ivory-dark);
+  font-size: 0.9rem;
+}
+
+.admin-detail-row__label {
+  color: var(--color-brown-soft);
+}
+
+.admin-detail-row__value {
+  text-align: right;
+  word-break: break-word;
+}
+
+.admin-status-update__controls {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.admin-status-update select,
+.admin-agent-draft__instruction {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+}
+
+.admin-agent-draft__instruction {
+  flex: 1 1 220px;
+}
+
+/* =========================================================
+   Customers (Epic 1.2 — Customer Management & CRM)
+   Extends the Admin Backoffice section above — same tokens,
+   same .admin-panel/.admin-table/.admin-state components.
+   ========================================================= */
+
+/* "Placeholder" state (Communications, AI Insights): distinct from
+   .admin-state--error/--empty on purpose — the feature itself isn't
+   enabled yet, not merely short on data. Reuses the dashed-border/
+   diagonal-stripe language the Dashboard's AI Insights card already
+   established (.admin-card--placeholder) rather than a new visual idea. */
+.admin-state--placeholder {
+  color: var(--color-brown-soft);
+  border: 1px dashed var(--color-gold);
+  border-radius: var(--radius);
+  background: repeating-linear-gradient(
+    135deg,
+    var(--color-ivory-dark),
+    var(--color-ivory-dark) 10px,
+    #fff 10px,
+    #fff 20px
+  );
+}
+
+.admin-profile-header {
+  margin-bottom: var(--space-3);
+}
+
+.admin-profile-header h2 {
+  font-family: var(--font-heading);
+  font-size: 1.5rem;
+  margin-bottom: var(--space-2);
+}
+
+.admin-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.admin-timeline__item {
+  display: flex;
+  flex-direction: column;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--color-ivory-dark);
+  font-size: 0.9rem;
+}
+
+.admin-timeline__item:last-child {
+  border-bottom: none;
+}
+
+.admin-timeline__description {
+  color: var(--color-brown);
+}
+
+.admin-timeline__meta {
+  font-size: 0.8rem;
+  color: var(--color-brown-soft);
+  margin-top: 0.15rem;
+}
+
+.admin-timeline__item--clickable {
+  cursor: pointer;
+}
+
+.admin-timeline__item--clickable:hover,
+.admin-timeline__item--clickable:focus-visible {
+  background: var(--color-ivory-dark);
+}
+
+/* =========================================================
+   Notifications (Event-Driven Customer Communication Platform)
+   Extends the Admin Backoffice section above — same tokens,
+   same .admin-panel/.admin-table/.admin-drawer components.
+   ========================================================= */
+
+.admin-table__preview-cell {
+  color: var(--color-brown-soft);
+  max-width: 260px;
+}
+
+/* Notification status badges — a distinct color per lifecycle stage so
+   the queue is scannable at a glance. Namespaced status-badge--notification-*
+   (see ui-helpers.js renderNotificationStatusBadge) to avoid colliding
+   with the order-status badge variants above, several of which reuse the
+   same words in spirit (e.g. an order can be "completed", a notification
+   can only ever be "sent"). */
+.status-badge--notification-queued {
+  background: var(--color-ivory-dark);
+  color: var(--color-brown-soft);
+}
+
+.status-badge--notification-draft {
+  background: #f3ebdc;
+  color: #7a5a2e;
+}
+
+.status-badge--notification-awaiting_approval {
+  background: #eee3f7;
+  color: #6a3b96;
+}
+
+.status-badge--notification-approved {
+  background: #e3edf7;
+  color: #2b5788;
+}
+
+.status-badge--notification-sent {
+  background: #e6f2ea;
+  color: #2c7a49;
+}
+
+.status-badge--notification-delivered {
+  background: var(--color-gold-light);
+  color: var(--color-brown);
+}
+
+.status-badge--notification-failed {
+  background: #f7e3e3;
+  color: #a13a3a;
+}
+
+.notification-preview {
+  background: var(--color-ivory);
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+}
+
+.notification-preview__subject {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  color: var(--color-brown);
+  margin: 0 0 var(--space-1);
+}
+
+.notification-preview__body {
+  margin: 0;
+  color: var(--color-brown-soft);
+  white-space: pre-wrap;
+}
+
+.notification-preview input[type="text"],
+.notification-preview textarea {
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  color: var(--color-brown);
+  background: #fff;
+  margin-bottom: var(--space-1);
+}
+
+.notification-preview textarea {
+  resize: vertical;
+}
+
+.notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
