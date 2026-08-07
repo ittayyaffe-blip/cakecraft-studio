@@ -10,6 +10,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 
+  <!-- Preconnect to the API origin so the DNS/TLS handshake overlaps with
+       page render instead of only starting once js/designer.js's fetch
+       call fires — shaves real time off getDesignerInit()'s first byte,
+       especially after a Railway cold start. -->
+  <link rel="preconnect" href="https://web-production-c9dd99.up.railway.app">
+  <link rel="dns-prefetch" href="https://web-production-c9dd99.up.railway.app">
+
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
@@ -46,13 +53,13 @@
   <main id="main">
     <section id="designer" class="collections" aria-labelledby="templateName">
       <div class="container template-detail">
-        <div class="collection-card">
-          <img id="templateImage" src="assets/images/hero-cake.svg" alt="Cake template" width="640" height="480">
+        <div class="collection-card is-loading" id="templateImageCard">
+          <img id="templateImage" alt="" width="640" height="480">
         </div>
 
-        <h1 id="templateName" class="section-title">Loading cake template...</h1>
+        <h1 id="templateName" class="section-title is-loading" aria-live="polite">Loading cake template…</h1>
 
-        <div id="designerDetails">
+        <div id="designerDetails" class="is-hidden">
           <div class="meta-group">
             <p class="section-subtitle">Collection: <span id="templateCollection"></span></p>
             <p class="section-subtitle">Style: <span id="templateStyle"></span></p>
@@ -94,7 +101,7 @@
       <address class="site-footer__contact">
         <p>15 Rue de Rivoli, Paris, France</p>
         <p><a href="tel:+33142567890">+33 1 42 56 78 90</a></p>
-        <p><a href="mailto:contact@maisondegateau.fr">contact@maisondegateau.fr</a></p>
+        <p><a href="mailto:mybestcake2002@gmail.com">mybestcake2002@gmail.com</a></p>
       </address>
 
       <div class="site-footer__social">

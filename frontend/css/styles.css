@@ -915,6 +915,61 @@ h3 {
   margin-bottom: var(--space-2);
 }
 
+/* Loading skeleton — present by default in the static HTML (so there's
+   never a flash of a generic placeholder cake or bare "Loading..." text
+   before JS even runs), removed by js/designer.js's renderTemplateDetail()
+   once the real template arrives, or by renderTemplateError() if the
+   fetch fails. Reuses the existing ivory/gold palette, no new colors. */
+#designer .collection-card.is-loading {
+  background-color: var(--color-ivory-dark);
+  background-image: linear-gradient(
+    90deg,
+    var(--color-ivory-dark) 25%,
+    var(--color-gold-light) 50%,
+    var(--color-ivory-dark) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+#designer .collection-card.is-loading img {
+  opacity: 0;
+}
+
+#designer #templateName.is-loading {
+  color: transparent;
+  width: min(60%, 340px);
+  height: 1.2em;
+  margin-inline: auto;
+  border-radius: var(--radius);
+  background-color: var(--color-ivory-dark);
+  background-image: linear-gradient(
+    90deg,
+    var(--color-ivory-dark) 25%,
+    var(--color-gold-light) 50%,
+    var(--color-ivory-dark) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #designer .collection-card.is-loading,
+  #designer #templateName.is-loading {
+    animation: none;
+    background-image: none;
+  }
+}
+
 #designer .meta-group {
   display: flex;
   flex-wrap: wrap;

@@ -30,25 +30,47 @@ function getTemplateIdFromUrl() {
   return new URLSearchParams(window.location.search).get("id");
 }
 
+// The loading state (a shimmering skeleton over the image card and title,
+// details panel hidden) is the default markup in designer.html, so there's
+// never a flash of a generic placeholder photo or bare "Loading..." text
+// before this even runs — this just re-asserts it defensively.
 function renderTemplateLoading() {
+  const imageCard = document.getElementById("templateImageCard");
   const nameEl = document.getElementById("templateName");
-  if (nameEl) nameEl.textContent = "Loading cake template...";
+  const detailsEl = document.getElementById("designerDetails");
+
+  if (imageCard) imageCard.classList.add("is-loading");
+  if (nameEl) {
+    nameEl.classList.add("is-loading");
+    nameEl.textContent = "Loading cake template…";
+  }
+  if (detailsEl) detailsEl.classList.add("is-hidden");
 }
 
 function renderTemplateError() {
+  const imageCard = document.getElementById("templateImageCard");
   const nameEl = document.getElementById("templateName");
-  if (nameEl) nameEl.textContent = "Unable to load this cake template. Please try again later.";
-
   const detailsEl = document.getElementById("designerDetails");
+
+  // Both loading-skeleton classes have to come off here too, not just on
+  // success — the skeleton's CSS renders #templateName's text transparent,
+  // so leaving .is-loading on would silently hide this very error message.
+  if (imageCard) imageCard.classList.remove("is-loading");
+  if (nameEl) {
+    nameEl.classList.remove("is-loading");
+    nameEl.textContent = "Unable to load this cake template. Please try again later.";
+  }
   if (detailsEl) detailsEl.classList.add("is-hidden");
 }
 
 function renderTemplateDetail(template) {
+  const imageCard = document.getElementById("templateImageCard");
   const img = document.getElementById("templateImage");
   const nameEl = document.getElementById("templateName");
   const collectionEl = document.getElementById("templateCollection");
   const styleEl = document.getElementById("templateStyle");
   const priceEl = document.getElementById("templateBasePrice");
+  const detailsEl = document.getElementById("designerDetails");
 
   if (img) {
     img.src = template.preview_image
@@ -56,10 +78,15 @@ function renderTemplateDetail(template) {
       : "assets/images/hero-cake.svg";
     img.alt = `${template.name} cake template`;
   }
-  if (nameEl) nameEl.textContent = template.name;
+  if (imageCard) imageCard.classList.remove("is-loading");
+  if (nameEl) {
+    nameEl.classList.remove("is-loading");
+    nameEl.textContent = template.name;
+  }
   if (collectionEl) collectionEl.textContent = template.category;
   if (styleEl) styleEl.textContent = template.style;
   if (priceEl) priceEl.textContent = `$${template.base_price.toFixed(2)}`;
+  if (detailsEl) detailsEl.classList.remove("is-hidden");
 }
 
 function createOptionGroup(legendText, groupName, items) {
