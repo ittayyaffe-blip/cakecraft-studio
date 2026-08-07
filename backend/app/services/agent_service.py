@@ -103,10 +103,11 @@ def generate_morning_briefing() -> dict:
     briefing = briefing_service.get_daily_briefing()
 
     if not is_configured():
+        logger.info("Morning briefing narrative skipped: Anthropic API is not configured")
         return _not_configured_response(
-            "AI narrative generation is not configured. See the structured "
+            "Today's AI insights aren't available right now — the structured "
             "forecast, high-priority orders, and recommended actions above "
-            "for today's operational picture."
+            "still reflect today's real data."
         )
 
     knowledge = rag_service.retrieve(
@@ -140,7 +141,10 @@ RELEVANT BAKERY KNOWLEDGE:
         return parsed
     except Exception:
         logger.exception("Morning briefing generation failed")
-        return _not_configured_response("AI narrative generation failed this time — see the structured data above.")
+        return _not_configured_response(
+            "We couldn't generate today's AI narrative just now — the "
+            "structured data above still reflects today's real numbers."
+        )
 
 
 def ask_operations_question(question: str) -> dict:
@@ -156,8 +160,9 @@ def ask_operations_question(question: str) -> dict:
     knowledge = rag_service.retrieve(question, top_k=4)
 
     if not is_configured():
+        logger.info("Agent question answering skipped: Anthropic API is not configured")
         return {
-            "answer": "AI answer generation is not configured. See the AI Daily Briefing above for the current forecast and priorities.",
+            "answer": "Our AI assistant isn't available right now — see the AI Daily Briefing above for today's forecast and priorities.",
             "sources": [],
         }
 
@@ -182,7 +187,7 @@ QUESTION: {question}"""
         answer = _claude(prompt, max_tokens=500)
     except Exception:
         logger.exception("Agent question answering failed for: %s", question)
-        answer = "AI answer generation failed this time. See the AI Daily Briefing above for the current data."
+        answer = "We couldn't answer that just now — see the AI Daily Briefing above for today's data."
 
     sources = [{"title": c["title"], "sourceFile": c["source_file"]} for c in knowledge]
     return {"answer": answer, "sources": sources}
@@ -208,7 +213,12 @@ def draft_customer_communication(order_id: str, instruction: str | None = None) 
         raise ValueError(f"No order found with id={order_id}")
 
     if not is_configured():
-        raise RuntimeError("AI draft generation is not configured (no ANTHROPIC_API_KEY set).")
+        # The RuntimeError's own message becomes the HTTP error `detail`
+        # the admin UI shows verbatim (see admin/agent.py's route) — kept
+        # free of any technical/env-var detail on purpose; that detail is
+        # logged here, server-side only.
+        logger.warning("Draft communication requested but Anthropic API is not configured")
+        raise RuntimeError("Our AI assistant isn't available right now — please try again later or draft this message manually.")
 
     customer = order.get("customers") or {}
     template = order.get("cake_templates") or {}

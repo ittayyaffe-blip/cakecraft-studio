@@ -110,9 +110,12 @@ def _build_prompt(question: str, chunks: list[dict]) -> str:
 def answer_question(question: str, top_k: int = 5) -> dict:
     """Retrieve + generate: the actual RAG pipeline. Always returns the
     retrieved sources (so staff can see what grounded the answer, or
-    read the excerpts directly if generation isn't configured) plus an
-    `answer` field — either a Claude-synthesized answer, or a clear
-    "not configured" message that still surfaces the raw excerpts.
+    read the excerpts directly if generation isn't available) plus an
+    `answer` field — either a Claude-synthesized answer, or a warm,
+    non-technical fallback that still surfaces the raw excerpts. The
+    *why* (unconfigured vs. a real API failure) is logged server-side
+    only — see the two branches below — never put in the response body,
+    which staff and any future customer-facing surface read directly.
     """
     chunks = retrieve(question, top_k=top_k)
     sources = [{"title": c["title"], "sourceFile": c["source_file"], "similarity": round(c["similarity"], 3)} for c in chunks]
@@ -121,9 +124,10 @@ def answer_question(question: str, top_k: int = 5) -> dict:
         return {"answer": "No relevant information found in the bakery knowledge base.", "sources": []}
 
     if not is_configured():
+        logger.info("RAG answer generation skipped: Anthropic API is not configured")
         excerpt = "\n\n".join(f"From {c['title']}: {c['content']}" for c in chunks[:2])
         return {
-            "answer": f"AI answer generation is not configured. Closest matching excerpts:\n\n{excerpt}",
+            "answer": f"Our AI assistant isn't available right now, but here's what we found in the bakery knowledge base:\n\n{excerpt}",
             "sources": sources,
         }
 
@@ -141,6 +145,6 @@ def answer_question(question: str, top_k: int = 5) -> dict:
         answer = next(block.text for block in response.content if block.type == "text")
     except Exception:
         logger.exception("RAG answer generation failed for question: %s", question)
-        answer = "AI answer generation failed. See the retrieved sources below for the relevant policy excerpts."
+        answer = "Our AI assistant couldn't generate an answer just now — here are the relevant excerpts from our bakery knowledge base instead."
 
     return {"answer": answer, "sources": sources}
