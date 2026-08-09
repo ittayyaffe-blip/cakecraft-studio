@@ -95,8 +95,17 @@ function renderOrderHistory(orders) {
     placedCell.textContent = formatDateTime(order.created_at);
 
     tr.append(cakeCell, statusCell, totalCell, placedCell);
-    tr.addEventListener("click", () => {
+
+    tr.tabIndex = 0;
+    const open = () => {
       window.location.href = `admin-orders.html?id=${encodeURIComponent(order.id)}`;
+    };
+    tr.addEventListener("click", open);
+    tr.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
     });
 
     tbody.appendChild(tr);

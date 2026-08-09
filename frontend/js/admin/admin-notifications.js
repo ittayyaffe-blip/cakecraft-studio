@@ -207,10 +207,12 @@ function buildPreviewBlock(notification, { editable }) {
   const subjectInput = document.createElement("input");
   subjectInput.type = "text";
   subjectInput.id = "notificationSubjectInput";
+  subjectInput.setAttribute("aria-label", "Subject");
   subjectInput.value = notification.subject || "";
 
   const bodyTextarea = document.createElement("textarea");
   bodyTextarea.id = "notificationBodyInput";
+  bodyTextarea.setAttribute("aria-label", "Message");
   bodyTextarea.rows = 5;
   bodyTextarea.value = notification.body || "";
 
@@ -221,6 +223,7 @@ function buildPreviewBlock(notification, { editable }) {
 
   const saveError = document.createElement("p");
   saveError.className = "admin-state admin-state--error is-hidden";
+  saveError.setAttribute("role", "alert");
 
   saveBtn.addEventListener("click", async () => {
     saveBtn.disabled = true;
@@ -246,6 +249,7 @@ function buildActionBar(notification) {
 
   const errorEl = document.createElement("p");
   errorEl.className = "admin-state admin-state--error is-hidden";
+  errorEl.setAttribute("role", "alert");
 
   const runAction = async (actionFn) => {
     errorEl.classList.add("is-hidden");

@@ -57,7 +57,20 @@ function renderNotificationStatusBadge(status) {
   return span;
 }
 
+// role="status"/"alert" goes on `container` — the pre-existing, page-defined
+// element every caller passes in (e.g. #ragAskResult, #recentOrdersContainer)
+// — not on the `<p>` created below. A freshly-inserted node that already
+// carries aria-live/role is announced inconsistently across screen readers;
+// a container that's already present and already marked as a live region
+// reliably announces content replacing its children, which is exactly what
+// container.innerHTML = "" + appendChild does here. It's also why this fix
+// needs no other file: every caller in this codebase renders a loading
+// state on a container before replacing it with real content or an error
+// (grepped every call site to confirm), so marking the container once here
+// covers that later, unrelated success-path render too — same container,
+// same live region, no second role needed at the call site.
 function renderLoadingState(container, message = "Loading…") {
+  container.setAttribute("role", "status");
   container.innerHTML = "";
   const p = document.createElement("p");
   p.className = "admin-state admin-state--loading";
@@ -66,6 +79,7 @@ function renderLoadingState(container, message = "Loading…") {
 }
 
 function renderErrorState(container, message = "Something went wrong. Please try again.") {
+  container.setAttribute("role", "alert");
   container.innerHTML = "";
   const p = document.createElement("p");
   p.className = "admin-state admin-state--error";
@@ -74,6 +88,7 @@ function renderErrorState(container, message = "Something went wrong. Please try
 }
 
 function renderEmptyState(container, message = "Nothing here yet.") {
+  container.setAttribute("role", "status");
   container.innerHTML = "";
   const p = document.createElement("p");
   p.className = "admin-state admin-state--empty";
@@ -88,6 +103,7 @@ function renderEmptyState(container, message = "Nothing here yet.") {
 // card already established, rather than inventing a new look for the same
 // idea.
 function renderPlaceholderState(container, message = "Coming in a future phase.") {
+  container.setAttribute("role", "status");
   container.innerHTML = "";
   const p = document.createElement("p");
   p.className = "admin-state admin-state--placeholder";

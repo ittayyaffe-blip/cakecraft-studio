@@ -235,13 +235,16 @@ function buildAgentDraftSection(order) {
   draftBtn.addEventListener("click", async () => {
     draftBtn.disabled = true;
     resultMsg.className = "admin-state";
+    resultMsg.setAttribute("role", "status"); // loading
     resultMsg.textContent = "Drafting…";
 
     try {
       await draftAgentCommunication(order.id, instructionInput.value.trim());
+      resultMsg.setAttribute("role", "status"); // success — still informational, not an error
       resultMsg.textContent = "Draft created — review it in the Notification Queue.";
     } catch (error) {
       resultMsg.className = "admin-state admin-state--error";
+      resultMsg.setAttribute("role", "alert");
       resultMsg.textContent = error.message || "Unable to draft a message.";
     } finally {
       draftBtn.disabled = false;
@@ -270,6 +273,7 @@ function buildStatusUpdateSection(order) {
 
   const select = document.createElement("select");
   select.id = "orderStatusSelect";
+  select.setAttribute("aria-label", "Order status");
   ALL_STATUSES.forEach((status) => {
     const option = document.createElement("option");
     option.value = status;
@@ -285,6 +289,7 @@ function buildStatusUpdateSection(order) {
 
   const statusError = document.createElement("p");
   statusError.className = "admin-state admin-state--error is-hidden";
+  statusError.setAttribute("role", "alert");
 
   updateBtn.addEventListener("click", async () => {
     updateBtn.disabled = true;
