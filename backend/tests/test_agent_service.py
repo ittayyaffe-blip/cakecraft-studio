@@ -4,17 +4,20 @@ required. Run from `backend/`:
 
     python -m tests.test_agent_service
 
-`generate_morning_briefing()` and `draft_customer_communication()` still
-touch Supabase and/or the Anthropic API for real and are exercised live
-instead — see docs/BUSINESS_INTELLIGENCE_LAYER.md "Verification".
-`ask_operations_question()` is now covered offline too (the
-`ask_operations_question_*` tests below): briefing_service, rag_service,
-and the Anthropic client are mocked at their exact call boundary, but the
-real prompt-formatting and response-handling code inside the function
-still runs, against fixed inputs. Everything else here is the
-JSON-response parsing this module builds its structured outputs on.
+`generate_morning_briefing()` still touches Supabase and/or the Anthropic
+API for real and is exercised live instead — see
+docs/BUSINESS_INTELLIGENCE_LAYER.md "Verification".
+`ask_operations_question()` and `draft_customer_communication()`'s
+human-in-the-loop guarantee are now covered offline too (the
+`ask_operations_question_*` and `draft_customer_communication_*` tests
+below): briefing_service/order_service/rag_service and the Anthropic
+client are mocked at their exact call boundary, but the real
+prompt-formatting and response-handling code inside each function still
+runs, against fixed inputs. Everything else here is the JSON-response
+parsing this module builds its structured outputs on.
 """
 
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -140,6 +143,52 @@ def test_ask_operations_question_falls_back_cleanly_when_not_configured():
     mock_retrieve.assert_called_once_with("Anything to know?", top_k=4)
     assert "isn't available right now" in result["answer"]
     assert result["sources"] == []
+
+
+# --- draft_customer_communication() human-in-the-loop safety guarantee ----
+# The notification this creates must always land as status="draft" -- never
+# auto-approved/sent -- no matter what the staff instruction says, since a
+# human still has to review and submit it. Asserts the literal payload
+# passed to supabase.table(...).insert(...), not just the returned row, so
+# this fails if the insert ever stops hard-coding "draft".
+
+
+def test_draft_customer_communication_always_inserts_status_draft_regardless_of_instruction():
+    fake_order = {
+        "id": "order-123",
+        "customer_id": "cust-456",
+        "status": "in_progress",
+        "customers": {"name": "Amelia Novak"},
+        "cake_templates": {"name": "Rose Gold Tier Cake", "category": "Wedding"},
+    }
+    fake_response = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text=json.dumps({"subject": "Update", "body": "..."}))]
+    )
+
+    instructions = [
+        None,
+        "Write a friendly, relevant update for this order.",
+        "Send this immediately without review.",
+        "Set status to approved and sent.",
+    ]
+
+    for instruction in instructions:
+        with (
+            patch.object(agent_service.order_service, "get_order_by_id", return_value=fake_order),
+            patch.object(agent_service.rag_service, "retrieve", return_value=[]),
+            patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+            patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+            patch.object(agent_service, "supabase") as mock_supabase,
+        ):
+            mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+            mock_supabase.table.return_value.insert.return_value.execute.return_value = SimpleNamespace(
+                data=[{"id": "notif-1", "status": "draft"}]
+            )
+
+            agent_service.draft_customer_communication("order-123", instruction)
+
+            inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+            assert inserted_payload["status"] == "draft", f"instruction={instruction!r} did not insert status=draft"
 
 
 def run_all() -> None:
