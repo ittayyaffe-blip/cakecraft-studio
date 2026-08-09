@@ -76,6 +76,10 @@ async function askAgent(question) {
   return adminFetch("/admin/agent/ask", { method: "POST", body: JSON.stringify({ question }) });
 }
 
+async function askRag(question) {
+  return adminFetch("/admin/rag/ask", { method: "POST", body: JSON.stringify({ question }) });
+}
+
 async function draftAgentCommunication(orderId, instruction) {
   return adminFetch("/admin/agent/draft-communication", {
     method: "POST",

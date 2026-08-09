@@ -398,6 +398,7 @@ function renderAgentBriefing(data) {
 
 async function loadAgentBriefing() {
   const container = document.getElementById("agentBriefingContainer");
+  renderLoadingState(container, "Loading AI Agent Insights…");
   try {
     const data = await getAgentMorningBriefing();
     renderAgentBriefing(data);
@@ -452,8 +453,62 @@ function initAgentAskForm() {
   });
 }
 
+// --- AI Knowledge Assistant (RAG) -------------------------------------------
+// A dedicated frontend entry point for the existing, already-working
+// POST /admin/rag/ask endpoint (rag_service.py, unmodified). Mirrors the
+// "Ask the AI Operations Agent" box above exactly — same form pattern,
+// same loading/error helpers, same result/sources rendering shape — just
+// pointed at the RAG-only endpoint instead of the Agent's.
+
+function renderRagAskResult(data) {
+  const container = document.getElementById("ragAskResult");
+  container.innerHTML = "";
+
+  const answer = document.createElement("p");
+  answer.className = "admin-agent-ask-answer";
+  answer.textContent = data.answer;
+  container.appendChild(answer);
+
+  if (data.sources && data.sources.length > 0) {
+    const sources = document.createElement("p");
+    sources.className = "admin-agent-briefing__sources";
+    sources.textContent = "Sources: " + data.sources.map((s) => s.title).join(", ");
+    container.appendChild(sources);
+  }
+}
+
+function initRagAskForm() {
+  const form = document.getElementById("ragAskForm");
+  if (!form) return;
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const input = document.getElementById("ragAskInput");
+    const question = input.value.trim();
+    if (!question) return;
+
+    const resultContainer = document.getElementById("ragAskResult");
+    const submitButton = form.querySelector("button[type=submit]");
+    renderLoadingState(resultContainer, "Searching the knowledge base…");
+    submitButton.disabled = true;
+
+    try {
+      const data = await askRag(question);
+      renderRagAskResult(data);
+    } catch (error) {
+      renderErrorState(resultContainer, "Unable to get an answer. Please try again.");
+    } finally {
+      submitButton.disabled = false;
+    }
+  });
+}
+
 async function loadDashboard() {
   const panelsGrid = document.querySelector(".admin-panels-grid");
+
+  renderLoadingState(document.getElementById("recentOrdersContainer"), "Loading recent orders…");
+  renderLoadingState(document.getElementById("recentAuditContainer"), "Loading recent audit events…");
+  renderLoadingState(document.getElementById("systemHealthContainer"), "Loading system health…");
 
   try {
     const data = await getDashboard();
@@ -479,4 +534,5 @@ document.addEventListener("DOMContentLoaded", () => {
   initRefreshButton();
   initBriefingRefreshButton();
   initAgentAskForm();
+  initRagAskForm();
 });
