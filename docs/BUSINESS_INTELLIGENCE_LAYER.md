@@ -27,6 +27,42 @@ Nothing existing was modified: `notification_service.py`, `admin/orders.py`, `ad
 
 ---
 
+### Which layer is deterministic vs. LLM-generated
+
+Two independent pipelines feed the dashboard's AI surfaces — worth stating
+plainly since both get called "AI" in the UI, but only one stage in each
+actually involves an LLM:
+
+```mermaid
+flowchart LR
+    F["ML Forecast<br/>(Random Forest — deterministic)"] --> B["Recommended Actions<br/>(fixed threshold rules — deterministic)"]
+    B --> A["AI Operations Agent<br/>(Claude narrative — LLM)"]
+    A --> UI["AI Agent Insights panel"]
+
+    KB["Knowledge Base<br/>(knowledge_base/*.md)"] --> R["RAG retrieval<br/>(pgvector — deterministic)"]
+    R --> K["AI Knowledge Assistant<br/>(Claude answer — LLM)"]
+    R --> A
+```
+
+`briefing_service.get_daily_briefing()` — the "AI Daily Briefing" — is the
+first two boxes on the top chain: `forecast_service.compute_tomorrow_forecast()`'s
+Random Forest prediction, plus `_recommended_actions()`'s three fixed
+threshold checks (pending notifications, high-priority orders, forecasted
+workload). Neither produces LLM-generated text; both are branded "AI"
+because they're built on the ML forecast, not because Claude writes their
+output. **The AI Daily Briefing itself never calls Claude.**
+
+The LLM step is specifically `agent_service.py`, which takes that same
+briefing data (via `briefing_service.get_daily_briefing()`) plus
+RAG-retrieved knowledge (via `rag_service.retrieve()`) and has Claude
+generate the actual narrative/interpretation — that's what renders in the
+"AI Agent Insights" panel and "Ask the AI Operations Agent" box. RAG
+retrieval feeds both the Knowledge Assistant *and* the Agent — the Agent
+calls the exact same `rag_service.retrieve()` the Knowledge Assistant
+uses, not a separate copy of retrieval.
+
+---
+
 ## ML Evaluation
 
 Random Forest, XGBoost, LightGBM, and CatBoost were trained on the same engineered daily feature table (calendar signals, lag/rolling-window history, the confirmed-orders-for-date signal) built from the seeded order history, with a time-based train/test split (`tools/evaluate_forecast_models.py`). Full methodology, both targets' complete results, and the raw machine-readable evidence: [`docs/evaluation/forecast_model_comparison.md`](evaluation/forecast_model_comparison.md) / [`.json`](evaluation/forecast_model_comparison.json).
