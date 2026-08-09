@@ -21,15 +21,37 @@ RECENT_ORDERS_LIMIT = 10
 RECENT_AUDIT_EVENTS_LIMIT = 10
 
 
+def _fetch_all_orders(columns: str) -> list[dict]:
+    """Paginates past PostgREST's default max-rows response cap (1000) —
+    caught live once this project's order volume grew past it (the demo
+    data scale-up to ~2500 orders; see docs/DATASET_SCALE_UP.md): an
+    unpaginated `.select()` was silently truncating to the first 1000
+    rows, undercounting totalOrders. Small, local duplicate of the same
+    fetch-all-pages pattern in briefing_service.py/forecast_service.py,
+    matching this codebase's existing convention of a small local helper
+    over a shared abstraction (see e.g. notification_service._page_to_
+    range's own docstring on why that one stays local too).
+    """
+    rows: list[dict] = []
+    page_size = 1000
+    start = 0
+    while True:
+        response = supabase.table("orders").select(columns).range(start, start + page_size - 1).execute()
+        rows.extend(response.data)
+        if len(response.data) < page_size:
+            break
+        start += page_size
+    return rows
+
+
 def _get_order_stats() -> dict:
     """Total orders, today's orders, and a count per status.
 
-    One query, counted client-side: cheap at this project's order volume.
-    If that ever stops being true, switch to a Postgres RPC that does the
-    GROUP BY server-side instead of fetching every row.
+    Counted client-side: cheap at this project's order volume. If that
+    ever stops being true, switch to a Postgres RPC that does the GROUP
+    BY server-side instead of fetching every row.
     """
-    response = supabase.table("orders").select("status, created_at").execute()
-    rows = response.data
+    rows = _fetch_all_orders("status, created_at")
 
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     orders_by_status = {status: 0 for status in order_service.ORDER_STATUSES}

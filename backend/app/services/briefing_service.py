@@ -31,16 +31,40 @@ from app.services import forecast_service, notification_service
 logger = logging.getLogger(__name__)
 
 
+def _fetch_all_orders(columns: str) -> list[dict]:
+    """Paginates past PostgREST's default max-rows response cap (1000) —
+    caught live once this project's order volume grew past it (the demo
+    data scale-up to ~2500 orders; see docs/DATASET_SCALE_UP.md).
+    Especially important here: an unpaginated `.select()` isn't
+    guaranteed to return the most-recently-created rows within its first
+    1000, so "today's" orders could be silently missing entirely, not
+    just undercounted. Small, local duplicate of the same fetch-all-pages
+    pattern in dashboard_service.py/forecast_service.py — see
+    dashboard_service._fetch_all_orders's docstring for why this stays a
+    local helper rather than a shared one.
+    """
+    rows: list[dict] = []
+    page_size = 1000
+    start = 0
+    while True:
+        response = supabase.table("orders").select(columns).range(start, start + page_size - 1).execute()
+        rows.extend(response.data)
+        if len(response.data) < page_size:
+            break
+        start += page_size
+    return rows
+
+
 def _todays_stats() -> dict:
     """Orders placed today (UTC) and their total revenue. Same "today"
     boundary dashboard_service._get_order_stats() already uses.
     """
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    response = supabase.table("orders").select("created_at, total_price").execute()
+    rows = _fetch_all_orders("created_at, total_price")
 
     todays_orders = 0
     todays_revenue = 0.0
-    for row in response.data:
+    for row in rows:
         if datetime.fromisoformat(row["created_at"]) >= today_start:
             todays_orders += 1
             todays_revenue += float(row["total_price"])

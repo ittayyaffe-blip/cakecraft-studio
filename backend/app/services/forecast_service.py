@@ -72,10 +72,31 @@ _RF_PARAMS = dict(n_estimators=100, max_depth=6, min_samples_leaf=3, random_stat
 def _fetch_order_history() -> list[dict]:
     """Every order's created_at/total_price/status/pickup_date — the raw
     series both the daily feature table and the confirmed-for-tomorrow
-    signal are built from.
+    signal are built from. Paginates past PostgREST's default max-rows
+    response cap (1000) — caught live once this project's order volume
+    grew past it (the demo data scale-up to ~2500 orders; see
+    docs/DATASET_SCALE_UP.md): an unpaginated `.select()` was silently
+    training the model on an arbitrary ~1000-order subset instead of the
+    full history. Small, local duplicate of the same fetch-all-pages
+    pattern in dashboard_service.py/briefing_service.py — see
+    dashboard_service._fetch_all_orders's docstring for why this stays a
+    local helper rather than a shared one.
     """
-    response = supabase.table("orders").select("created_at, total_price, status, pickup_date").execute()
-    return response.data
+    rows: list[dict] = []
+    page_size = 1000
+    start = 0
+    while True:
+        response = (
+            supabase.table("orders")
+            .select("created_at, total_price, status, pickup_date")
+            .range(start, start + page_size - 1)
+            .execute()
+        )
+        rows.extend(response.data)
+        if len(response.data) < page_size:
+            break
+        start += page_size
+    return rows
 
 
 def _build_daily_feature_table(orders: list[dict]) -> pd.DataFrame:
