@@ -222,6 +222,7 @@ function buildAgentDraftSection(order) {
   const instructionInput = document.createElement("input");
   instructionInput.type = "text";
   instructionInput.placeholder = "Optional: what should the message say? (e.g. delay by a day)";
+  instructionInput.setAttribute("aria-label", "What should the message say?");
   instructionInput.className = "admin-agent-draft__instruction";
 
   const draftBtn = document.createElement("button");
