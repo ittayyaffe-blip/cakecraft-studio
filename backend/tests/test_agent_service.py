@@ -4,13 +4,21 @@ required. Run from `backend/`:
 
     python -m tests.test_agent_service
 
-`generate_morning_briefing()`, `ask_operations_question()`, and
-`draft_customer_communication()` all touch Supabase and/or the Anthropic
-API and are exercised live instead — see
-docs/BUSINESS_INTELLIGENCE_LAYER.md "Verification". Everything below is
-the JSON-response parsing this module builds its structured outputs on.
+`generate_morning_briefing()` and `draft_customer_communication()` still
+touch Supabase and/or the Anthropic API for real and are exercised live
+instead — see docs/BUSINESS_INTELLIGENCE_LAYER.md "Verification".
+`ask_operations_question()` is now covered offline too (the
+`ask_operations_question_*` tests below): briefing_service, rag_service,
+and the Anthropic client are mocked at their exact call boundary, but the
+real prompt-formatting and response-handling code inside the function
+still runs, against fixed inputs. Everything else here is the
+JSON-response parsing this module builds its structured outputs on.
 """
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from app.services import agent_service
 from app.services.agent_service import _not_configured_response, _parse_json_response
 
 
@@ -48,6 +56,89 @@ def test_not_configured_response_has_null_structured_fields():
     assert result["productionNotes"] is None
     assert result["staffingNotes"] is None
     assert result["inventoryNotes"] is None
+    assert result["sources"] == []
+
+
+# --- ask_operations_question() orchestration, mocked at the ----------------
+# briefing_service/rag_service/Claude boundary only. Everything in between
+# (is_configured(), the prompt f-string, unpacking the response) is real.
+
+
+def test_ask_operations_question_incorporates_briefing_and_knowledge_into_the_model_request():
+    fake_briefing = {
+        "todaysOrders": 7,
+        "todaysRevenue": 412.50,
+        "forecast": {
+            "predictedOrders": 12,
+            "predictedRevenue": 890.0,
+            "workloadLevel": "High",
+            "confidence": 82,
+            "reason": "Based on last week's Saturday volume.",
+        },
+        "pendingNotifications": {"total": 3},
+        "highPriorityOrders": [
+            {
+                "customerName": "Amelia Novak",
+                "templateName": "Rose Gold Tier Cake",
+                "status": "in_progress",
+                "reason": "Pickup due today",
+            }
+        ],
+    }
+    fake_chunks = [
+        {
+            "title": "Bakery Operations Manual",
+            "content": "Add a second baker above 10 predicted orders.",
+            "source_file": "bakery_operations_manual.md",
+        }
+    ]
+    fake_response = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="Yes, staff up for tomorrow's High workload.")]
+    )
+
+    with (
+        patch.object(agent_service.briefing_service, "get_daily_briefing", return_value=fake_briefing),
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks) as mock_retrieve,
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        result = agent_service.ask_operations_question("Are we staffed for tomorrow?")
+
+    mock_retrieve.assert_called_once_with("Are we staffed for tomorrow?", top_k=4)
+
+    sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
+    # Live operational/briefing context reached the model request.
+    assert "7 orders" in sent_prompt
+    assert "$412.50" in sent_prompt
+    assert "12 orders" in sent_prompt
+    assert "High workload" in sent_prompt
+    assert "Amelia Novak" in sent_prompt
+    # Retrieved bakery knowledge reached the model request too.
+    assert "Bakery Operations Manual" in sent_prompt
+    assert "Add a second baker above 10 predicted orders." in sent_prompt
+
+    assert result["answer"] == "Yes, staff up for tomorrow's High workload."  # mocked response handled correctly
+    assert result["sources"] == [{"title": "Bakery Operations Manual", "sourceFile": "bakery_operations_manual.md"}]
+
+
+def test_ask_operations_question_falls_back_cleanly_when_not_configured():
+    fake_briefing = {
+        "todaysOrders": 0,
+        "todaysRevenue": 0.0,
+        "forecast": {"predictedOrders": 0, "predictedRevenue": 0.0, "workloadLevel": "Low", "confidence": 50, "reason": "x"},
+        "pendingNotifications": {"total": 0},
+        "highPriorityOrders": [],
+    }
+    with (
+        patch.object(agent_service.briefing_service, "get_daily_briefing", return_value=fake_briefing),
+        patch.object(agent_service.rag_service, "retrieve", return_value=[]) as mock_retrieve,
+        patch.object(agent_service.settings, "anthropic_api_key", None),
+    ):
+        result = agent_service.ask_operations_question("Anything to know?")
+
+    mock_retrieve.assert_called_once_with("Anything to know?", top_k=4)
+    assert "isn't available right now" in result["answer"]
     assert result["sources"] == []
 
 
