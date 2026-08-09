@@ -34,14 +34,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 from app.core.database import supabase  # noqa: E402
 
 
+def _fetch_all_orders(columns: str) -> list[dict]:
+    """Paginates past PostgREST's default max-rows response cap (1000) —
+    the same fix already applied to forecast_service.py/dashboard_service.py/
+    briefing_service.py (see forecast_service._fetch_order_history's own
+    docstring for the full story). Without this, this comparison would
+    silently train/test on an arbitrary ~1000-order subset instead of the
+    full seeded history, undermining the one thing this script exists to
+    guarantee: candidates evaluated on the *same* dataset.
+    """
+    rows: list[dict] = []
+    page_size = 1000
+    start = 0
+    while True:
+        response = supabase.table("orders").select(columns).range(start, start + page_size - 1).execute()
+        rows.extend(response.data)
+        if len(response.data) < page_size:
+            break
+        start += page_size
+    return rows
+
+
 def load_daily_series() -> pd.DataFrame:
     """One row per calendar day from the first order to today, with
     order_count/revenue (0 for days with no orders) plus the raw feature
     inputs needed downstream. Built from `orders.created_at`/`total_price`
     — the same source of truth forecast_service.py already reads.
     """
-    response = supabase.table("orders").select("created_at, total_price, status, pickup_date").execute()
-    rows = response.data
+    rows = _fetch_all_orders("created_at, total_price, status, pickup_date")
     df = pd.DataFrame(rows)
     df["created_at"] = pd.to_datetime(df["created_at"], utc=True, format="ISO8601")
     df["date"] = df["created_at"].dt.date

@@ -29,16 +29,18 @@ Nothing existing was modified: `notification_service.py`, `admin/orders.py`, `ad
 
 ## ML Evaluation
 
-Random Forest, XGBoost, LightGBM, and CatBoost were trained on the same engineered daily feature table (calendar signals, lag/rolling-window history, the confirmed-orders-for-date signal) built from the seeded order history, with a time-based train/test split (`tools/evaluate_forecast_models.py`). Results (MAE, lower is better):
+Random Forest, XGBoost, LightGBM, and CatBoost were trained on the same engineered daily feature table (calendar signals, lag/rolling-window history, the confirmed-orders-for-date signal) built from the seeded order history, with a time-based train/test split (`tools/evaluate_forecast_models.py`). Full methodology, both targets' complete results, and the raw machine-readable evidence: [`docs/evaluation/forecast_model_comparison.md`](evaluation/forecast_model_comparison.md) / [`.json`](evaluation/forecast_model_comparison.json).
 
-| Model | Volume MAE | Revenue MAE | Notes |
+**Current results** (measured against the full, current production dataset — 2,628 orders, 2023-08-10 to 2026-08-07, evaluated 2026-08-09):
+
+| Model | Volume MAE / RMSE | Revenue MAE / RMSE | Notes |
 |---|---|---|---|
-| **Random Forest** | **1.26** | **199.86** | Best on volume, competitive on revenue. Lightest weight (only `scikit-learn`, already needed for TF-IDF). Natural uncertainty quantification via per-tree prediction spread — directly powers the confidence score. |
-| LightGBM | 1.29 | **196.98** | Marginally best on revenue only. New dependency. |
-| XGBoost | 1.33 | 221.39 | Consistently worst here. |
-| CatBoost | 1.31 | 216.63 | Pulls in matplotlib/plotly/graphviz (~100MB+) as transitive deps — real deployment weight for no accuracy gain. |
+| **Random Forest** | **1.46 / 2.17** (best) | 244.85 / 354.91 (2nd) | Wins volume outright. Lightest weight (only `scikit-learn`, already needed for TF-IDF). Natural uncertainty quantification via per-tree prediction spread — directly powers the confidence score. |
+| CatBoost | 1.50 / 2.23 | **237.26 / 345.82** (best) | Wins revenue. Pulls in matplotlib/plotly/graphviz (~100MB+) as transitive deps. |
+| XGBoost | 1.52 / 2.27 | 264.74 / 400.71 | Consistently behind on both targets. |
+| LightGBM | 1.58 / 2.35 | 261.56 / 398.57 | Consistently behind on both targets. |
 
-**Selected: Random Forest.** It wins or ties on the primary target (volume), stays within 1.5% of the best revenue result, needs no new production dependency beyond what RAG's TF-IDF step already requires, and its ensemble variance gives a principled confidence score for free — exactly the "maintainability, explainability, reliability" priority this phase asked for over squeezing out marginal accuracy. Only Random Forest ships in `requirements.txt`; the other three are evaluation-only, documented here, not deployed.
+**Selected: Random Forest.** It wins outright on the primary target (volume — the figure that drives every downstream staffing/workload output), needs no new production dependency beyond what RAG's TF-IDF step already requires, and its ensemble variance gives a principled confidence score for free. On revenue it is a clear second, genuinely behind CatBoost by **3.2% MAE / 2.6% RMSE** — real numbers from the current dataset, not the "within 1.5%" figure an earlier, smaller (pre-scale-up) snapshot of this comparison reported. That gap doesn't change the selection: full reasoning, including why a modest secondary-target loss doesn't outweigh Random Forest's other advantages, is in the linked write-up. Only Random Forest ships in `requirements.txt`; the other three are evaluation-only (`tools/requirements-eval.txt`), documented here, not deployed.
 
 The model retrains fresh on every `/admin/briefing` request (~350ms for ~340 days of history, measured) rather than being persisted/versioned — the dataset is small enough that this is faster to reason about and immune to staleness than a training pipeline would be.
 

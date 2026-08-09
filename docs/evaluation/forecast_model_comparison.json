@@ -1,0 +1,218 @@
+{
+  "evaluationTimestampUtc": "2026-08-09T10:43:59.601866+00:00",
+  "methodology": {
+    "description": "Time-based (non-shuffled) train/test split over one row per calendar day, engineered daily feature table (calendar signals, lag/rolling-window history, confirmed-orders-for-date signal). Same FEATURE_COLUMNS and evaluation code as tools/evaluate_forecast_models.py (unmodified).",
+    "testFraction": 0.2,
+    "featureColumns": [
+      "dow",
+      "month",
+      "is_weekend",
+      "day_index",
+      "confirmed_for_date",
+      "lag_1_count",
+      "lag_7_count",
+      "lag_14_count",
+      "lag_1_revenue",
+      "lag_7_revenue",
+      "lag_14_revenue",
+      "roll7_mean_count",
+      "roll7_std_count",
+      "roll28_mean_count",
+      "roll7_mean_revenue",
+      "roll28_mean_revenue"
+    ]
+  },
+  "dataset": {
+    "sourceTable": "orders",
+    "rawOrderRowCount": 2628,
+    "dailySeriesCalendarDays": 1094,
+    "dailySeriesDateRange": {
+      "start": "2023-08-10",
+      "end": "2026-08-07"
+    },
+    "usableRowsAfterWarmup": 1066,
+    "trainRows": 852,
+    "testRows": 214
+  },
+  "environment": {
+    "python": "3.13.9",
+    "scikitLearn": "1.9.0",
+    "xgboost": "3.4.0",
+    "lightgbm": "4.7.0",
+    "catboost": "1.2.10",
+    "pandas": "3.0.5",
+    "numpy": "2.5.1"
+  },
+  "results": [
+    {
+      "target": "Order Volume",
+      "targetColumn": "target_count",
+      "model": "RandomForest",
+      "modelConfig": {
+        "bootstrap": true,
+        "ccp_alpha": 0.0,
+        "criterion": "squared_error",
+        "max_depth": 6,
+        "max_features": 1.0,
+        "min_impurity_decrease": 0.0,
+        "min_samples_leaf": 3,
+        "min_samples_split": 2,
+        "min_weight_fraction_leaf": 0.0,
+        "n_estimators": 200,
+        "oob_score": false,
+        "random_state": 42,
+        "verbose": 0,
+        "warm_start": false
+      },
+      "mae": 1.4645294741935664,
+      "rmse": 2.1678115713260677,
+      "mapeNonZeroActualsOnly": 0.46014303434582154
+    },
+    {
+      "target": "Order Volume",
+      "targetColumn": "target_count",
+      "model": "XGBoost",
+      "modelConfig": {
+        "objective": "reg:squarederror",
+        "enable_categorical": true,
+        "learning_rate": 0.05,
+        "max_depth": 4,
+        "missing": null,
+        "n_estimators": 200,
+        "random_state": 42,
+        "verbosity": 0
+      },
+      "mae": 1.5201125144958496,
+      "rmse": 2.2712362322812543,
+      "mapeNonZeroActualsOnly": 0.4694788157939911
+    },
+    {
+      "target": "Order Volume",
+      "targetColumn": "target_count",
+      "model": "LightGBM",
+      "modelConfig": {
+        "boosting_type": "gbdt",
+        "colsample_bytree": 1.0,
+        "importance_type": "split",
+        "learning_rate": 0.05,
+        "max_depth": 4,
+        "min_child_samples": 5,
+        "min_child_weight": 0.001,
+        "min_split_gain": 0.0,
+        "n_estimators": 200,
+        "num_leaves": 31,
+        "random_state": 42,
+        "reg_alpha": 0.0,
+        "reg_lambda": 0.0,
+        "subsample": 1.0,
+        "subsample_for_bin": 200000,
+        "subsample_freq": 0,
+        "verbosity": -1
+      },
+      "mae": 1.579764604789126,
+      "rmse": 2.354506814623562,
+      "mapeNonZeroActualsOnly": 0.4836032933997741
+    },
+    {
+      "target": "Order Volume",
+      "targetColumn": "target_count",
+      "model": "CatBoost",
+      "modelConfig": {
+        "iterations": 200,
+        "learning_rate": 0.05,
+        "depth": 4,
+        "loss_function": "RMSE",
+        "verbose": false,
+        "random_state": 42
+      },
+      "mae": 1.4965479522838299,
+      "rmse": 2.2277153773856004,
+      "mapeNonZeroActualsOnly": 0.4554275038581187
+    },
+    {
+      "target": "Revenue",
+      "targetColumn": "target_revenue",
+      "model": "RandomForest",
+      "modelConfig": {
+        "bootstrap": true,
+        "ccp_alpha": 0.0,
+        "criterion": "squared_error",
+        "max_depth": 6,
+        "max_features": 1.0,
+        "min_impurity_decrease": 0.0,
+        "min_samples_leaf": 3,
+        "min_samples_split": 2,
+        "min_weight_fraction_leaf": 0.0,
+        "n_estimators": 200,
+        "oob_score": false,
+        "random_state": 42,
+        "verbose": 0,
+        "warm_start": false
+      },
+      "mae": 244.84952386683509,
+      "rmse": 354.90588946838193,
+      "mapeNonZeroActualsOnly": 0.7314336404933092
+    },
+    {
+      "target": "Revenue",
+      "targetColumn": "target_revenue",
+      "model": "XGBoost",
+      "modelConfig": {
+        "objective": "reg:squarederror",
+        "enable_categorical": true,
+        "learning_rate": 0.05,
+        "max_depth": 4,
+        "missing": null,
+        "n_estimators": 200,
+        "random_state": 42,
+        "verbosity": 0
+      },
+      "mae": 264.7391771512611,
+      "rmse": 400.7070751537152,
+      "mapeNonZeroActualsOnly": 0.6557061812232629
+    },
+    {
+      "target": "Revenue",
+      "targetColumn": "target_revenue",
+      "model": "LightGBM",
+      "modelConfig": {
+        "boosting_type": "gbdt",
+        "colsample_bytree": 1.0,
+        "importance_type": "split",
+        "learning_rate": 0.05,
+        "max_depth": 4,
+        "min_child_samples": 5,
+        "min_child_weight": 0.001,
+        "min_split_gain": 0.0,
+        "n_estimators": 200,
+        "num_leaves": 31,
+        "random_state": 42,
+        "reg_alpha": 0.0,
+        "reg_lambda": 0.0,
+        "subsample": 1.0,
+        "subsample_for_bin": 200000,
+        "subsample_freq": 0,
+        "verbosity": -1
+      },
+      "mae": 261.55896357713556,
+      "rmse": 398.5723052764259,
+      "mapeNonZeroActualsOnly": 0.6820792080152694
+    },
+    {
+      "target": "Revenue",
+      "targetColumn": "target_revenue",
+      "model": "CatBoost",
+      "modelConfig": {
+        "iterations": 200,
+        "learning_rate": 0.05,
+        "depth": 4,
+        "loss_function": "RMSE",
+        "verbose": false,
+        "random_state": 42
+      },
+      "mae": 237.2603551474341,
+      "rmse": 345.8161983365279,
+      "mapeNonZeroActualsOnly": 0.6398263422831241
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+# Evaluation-only dependencies for tools/evaluate_forecast_models.py.
+#
+# NOT part of the deployed application and NOT referenced by
+# backend/requirements.txt — the production forecaster
+# (backend/app/services/forecast_service.py) uses only scikit-learn's
+# RandomForestRegressor, already covered there. See
+# docs/BUSINESS_INTELLIGENCE_LAYER.md "ML Evaluation" and that module's
+# own docstring for why only the selected model ships in production.
+#
+# Install into the project's existing venv to run the comparison locally:
+#   <venv>/pip install -r tools/requirements-eval.txt
+#
+# Pinned to the exact versions already verified in this project's own
+# .venv (Python 3.13.9) against the current numpy==2.5.1/pandas==3.0.5 —
+# each regressor's constructor was confirmed compatible with the exact
+# kwargs get_candidates() in evaluate_forecast_models.py passes it.
+xgboost==3.4.0
+lightgbm==4.7.0
+catboost==1.2.10
