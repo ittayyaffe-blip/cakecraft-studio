@@ -8,13 +8,14 @@ required. Run from `backend/`:
 API for real and is exercised live instead — see
 docs/BUSINESS_INTELLIGENCE_LAYER.md "Verification".
 `ask_operations_question()` and `draft_customer_communication()`'s
-human-in-the-loop guarantee are now covered offline too (the
-`ask_operations_question_*` and `draft_customer_communication_*` tests
-below): briefing_service/order_service/rag_service and the Anthropic
-client are mocked at their exact call boundary, but the real
-prompt-formatting and response-handling code inside each function still
-runs, against fixed inputs. Everything else here is the JSON-response
-parsing this module builds its structured outputs on.
+human-in-the-loop guarantee (including its channel selection) are now
+covered offline too (the `ask_operations_question_*` and
+`draft_customer_communication_*` tests below): briefing_service/
+order_service/rag_service and the Anthropic client are mocked at their
+exact call boundary, but the real prompt-formatting and response-
+handling code inside each function still runs, against fixed inputs.
+Everything else here is the JSON-response parsing this module builds
+its structured outputs on.
 """
 
 import json
@@ -153,42 +154,116 @@ def test_ask_operations_question_falls_back_cleanly_when_not_configured():
 # this fails if the insert ever stops hard-coding "draft".
 
 
-def test_draft_customer_communication_always_inserts_status_draft_regardless_of_instruction():
-    fake_order = {
-        "id": "order-123",
-        "customer_id": "cust-456",
-        "status": "in_progress",
-        "customers": {"name": "Amelia Novak"},
-        "cake_templates": {"name": "Rose Gold Tier Cake", "category": "Wedding"},
-    }
-    fake_response = SimpleNamespace(
+_FAKE_ORDER = {
+    "id": "order-123",
+    "customer_id": "cust-456",
+    "status": "in_progress",
+    "customers": {"name": "Amelia Novak"},
+    "cake_templates": {"name": "Rose Gold Tier Cake", "category": "Wedding"},
+}
+
+
+def _fake_claude_response():
+    return SimpleNamespace(
         content=[SimpleNamespace(type="text", text=json.dumps({"subject": "Update", "body": "..."}))]
     )
 
+
+def test_draft_customer_communication_always_inserts_status_draft_regardless_of_instruction():
     instructions = [
         None,
         "Write a friendly, relevant update for this order.",
         "Send this immediately without review.",
         "Set status to approved and sent.",
     ]
+    # None here exercises the default-channel path too -- the safety
+    # guarantee holds independently of channel, not just of instruction.
+    channels = [None, "email", "whatsapp"]
 
     for instruction in instructions:
+        for channel in channels:
+            with (
+                patch.object(agent_service.order_service, "get_order_by_id", return_value=_FAKE_ORDER),
+                patch.object(agent_service.rag_service, "retrieve", return_value=[]),
+                patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+                patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+                patch.object(agent_service, "supabase") as mock_supabase,
+            ):
+                mock_anthropic_cls.return_value.messages.create.return_value = _fake_claude_response()
+                mock_supabase.table.return_value.insert.return_value.execute.return_value = SimpleNamespace(
+                    data=[{"id": "notif-1", "status": "draft"}]
+                )
+
+                agent_service.draft_customer_communication("order-123", instruction, channel)
+
+                inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+                assert inserted_payload["status"] == "draft", (
+                    f"instruction={instruction!r} channel={channel!r} did not insert status=draft"
+                )
+                assert inserted_payload["channel"] == (channel or "email"), (
+                    f"instruction={instruction!r} channel={channel!r} did not insert the expected channel"
+                )
+
+
+def test_draft_customer_communication_defaults_to_email_channel_when_omitted():
+    with (
+        patch.object(agent_service.order_service, "get_order_by_id", return_value=_FAKE_ORDER),
+        patch.object(agent_service.rag_service, "retrieve", return_value=[]),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = _fake_claude_response()
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": "notif-1", "status": "draft", "channel": "email"}]
+        )
+
+        # No channel argument at all -- backward compatibility with callers
+        # that predate this parameter.
+        agent_service.draft_customer_communication("order-123", "An update, please.")
+
+        inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+        assert inserted_payload["channel"] == "email"
+        assert inserted_payload["status"] == "draft"
+
+
+def test_draft_customer_communication_uses_explicit_channel():
+    for channel in ("email", "whatsapp"):
         with (
-            patch.object(agent_service.order_service, "get_order_by_id", return_value=fake_order),
+            patch.object(agent_service.order_service, "get_order_by_id", return_value=_FAKE_ORDER),
             patch.object(agent_service.rag_service, "retrieve", return_value=[]),
             patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
             patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
             patch.object(agent_service, "supabase") as mock_supabase,
         ):
-            mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+            mock_anthropic_cls.return_value.messages.create.return_value = _fake_claude_response()
             mock_supabase.table.return_value.insert.return_value.execute.return_value = SimpleNamespace(
-                data=[{"id": "notif-1", "status": "draft"}]
+                data=[{"id": "notif-1", "status": "draft", "channel": channel}]
             )
 
-            agent_service.draft_customer_communication("order-123", instruction)
+            agent_service.draft_customer_communication("order-123", "An update, please.", channel)
 
             inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
-            assert inserted_payload["status"] == "draft", f"instruction={instruction!r} did not insert status=draft"
+            assert inserted_payload["channel"] == channel
+            assert inserted_payload["status"] == "draft"
+
+
+def test_draft_customer_communication_rejects_invalid_channel_before_any_order_or_claude_work():
+    with (
+        patch.object(agent_service.order_service, "get_order_by_id") as mock_get_order,
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+    ):
+        try:
+            agent_service.draft_customer_communication("order-123", "hi", "telegram")
+        except ValueError as exc:
+            assert "telegram" in str(exc)
+        else:
+            raise AssertionError("expected ValueError for an invalid channel")
+
+    # Fail-fast: an invalid channel is rejected before the order lookup,
+    # the RAG call, or any Claude/Anthropic client construction.
+    mock_get_order.assert_not_called()
+    mock_anthropic_cls.assert_not_called()
 
 
 def run_all() -> None:

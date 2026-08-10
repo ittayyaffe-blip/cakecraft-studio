@@ -219,6 +219,20 @@ function buildAgentDraftSection(order) {
   hint.textContent = "Draft a customer message for this order — it's added to the Notification Queue for your review, never sent automatically.";
   section.appendChild(hint);
 
+  const channelSelect = document.createElement("select");
+  channelSelect.setAttribute("aria-label", "Communication channel");
+  channelSelect.className = "admin-agent-draft__channel";
+  [
+    { value: "email", label: "Email" },
+    { value: "whatsapp", label: "WhatsApp" },
+  ].forEach(({ value, label }) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    channelSelect.appendChild(option);
+  });
+  channelSelect.value = "email"; // default channel — staff can change it before drafting
+
   const instructionInput = document.createElement("input");
   instructionInput.type = "text";
   instructionInput.placeholder = "Optional: what should the message say? (e.g. delay by a day)";
@@ -240,7 +254,7 @@ function buildAgentDraftSection(order) {
     resultMsg.textContent = "Drafting…";
 
     try {
-      await draftAgentCommunication(order.id, instructionInput.value.trim());
+      await draftAgentCommunication(order.id, instructionInput.value.trim(), channelSelect.value);
       resultMsg.setAttribute("role", "status"); // success — still informational, not an error
       resultMsg.textContent = "Draft created — review it in the Notification Queue.";
     } catch (error) {
@@ -254,7 +268,7 @@ function buildAgentDraftSection(order) {
 
   const controls = document.createElement("div");
   controls.className = "admin-status-update__controls";
-  controls.append(instructionInput, draftBtn);
+  controls.append(channelSelect, instructionInput, draftBtn);
 
   section.append(controls, resultMsg);
   return section;

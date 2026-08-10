@@ -12,8 +12,9 @@ Combines live operational data (briefing_service), the ML forecast
   - ask_operations_question(question) — the general "what should I
     prepare tomorrow?" entry point: live data + forecast + retrieved
     bakery knowledge, synthesized into one grounded recommendation.
-  - draft_customer_communication(order_id, instruction) — drafts a
-    customer message and inserts it as a `draft` notification, reusing
+  - draft_customer_communication(order_id, instruction, channel) —
+    drafts a customer message for the staff-selected channel
+    (email/whatsapp) and inserts it as a `draft` notification, reusing
     the *existing* Notification Engine's table/lifecycle exactly as-is
     (no changes to notification_service.py — see the function's own
     docstring for why the insert happens here directly).
@@ -193,7 +194,12 @@ QUESTION: {question}"""
     return {"answer": answer, "sources": sources}
 
 
-def draft_customer_communication(order_id: str, instruction: str | None = None) -> dict:
+VALID_CHANNELS = ("email", "whatsapp")
+
+
+def draft_customer_communication(
+    order_id: str, instruction: str | None = None, channel: str | None = None
+) -> dict:
     """Drafts a customer message for a specific order and inserts it
     directly into `notifications` at `draft` status — the exact same
     table/shape/lifecycle `notification_service.create_notification_for_
@@ -205,9 +211,27 @@ def draft_customer_communication(order_id: str, instruction: str | None = None) 
     Queue UI, approval workflow, and Communication Adapters already know
     how to handle without any changes there either.
 
-    Raises ValueError if the order doesn't exist — the route turns this
-    into a 404, same convention as every other order-scoped lookup.
+    `channel` is the staff's explicit Email/WhatsApp choice from the
+    Order Detail drawer — defaults to "email" for backward compatibility
+    with callers that predate this parameter. Validated strictly here,
+    independently of the route's own check (see admin/agent.py), so this
+    function is safe called directly too. This is the *only* place
+    `channel` is decided: it never reaches the Claude prompt below and
+    Claude's response is never consulted for it, the same way
+    `status="draft"` in the insert payload isn't something Claude's
+    output can influence either — both are hardcoded from validated
+    inputs, not parsed from the model's text.
+
+    Raises ValueError if `channel` isn't one of VALID_CHANNELS, or if the
+    order doesn't exist — the route turns both into a clean HTTP error
+    (400 and 404 respectively; see admin/agent.py). Channel is validated
+    first, before the order lookup or any Claude/RAG call, so an invalid
+    request fails fast without unnecessary work.
     """
+    channel = channel or "email"
+    if channel not in VALID_CHANNELS:
+        raise ValueError(f"Invalid channel: {channel!r} (must be one of {VALID_CHANNELS})")
+
     order = order_service.get_order_by_id(order_id)
     if order is None:
         raise ValueError(f"No order found with id={order_id}")
@@ -252,6 +276,7 @@ RELEVANT BAKERY KNOWLEDGE:
         "customer_id": order["customer_id"],
         "event": "agent_drafted",
         "status": "draft",
+        "channel": channel,
         "subject": subject,
         "body": body,
     }

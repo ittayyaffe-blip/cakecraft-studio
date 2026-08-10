@@ -80,10 +80,10 @@ async function askRag(question) {
   return adminFetch("/admin/rag/ask", { method: "POST", body: JSON.stringify({ question }) });
 }
 
-async function draftAgentCommunication(orderId, instruction) {
+async function draftAgentCommunication(orderId, instruction, channel) {
   return adminFetch("/admin/agent/draft-communication", {
     method: "POST",
-    body: JSON.stringify({ orderId, instruction: instruction || null }),
+    body: JSON.stringify({ orderId, instruction: instruction || null, channel: channel || null }),
   });
 }
 

@@ -59,8 +59,20 @@ def ask(request: AgentAskRequest, admin: AdminIdentity = Depends(get_current_adm
 
 @router.post("/draft-communication", response_model=DraftCommunicationResponse)
 def draft_communication(request: DraftCommunicationRequest, admin: AdminIdentity = Depends(get_current_admin)):
+    # Same idiom as orders.py's list_orders validating its `status` query
+    # param before ever calling the service: a bad channel is a client
+    # error, not a 404 — checked here so it doesn't collide with
+    # draft_customer_communication's own ValueError for "order not
+    # found" below. agent_service also validates independently (so it's
+    # safe called directly, e.g. from tests) — this is belt-and-suspenders,
+    # not the only check.
+    if request.channel is not None and request.channel not in agent_service.VALID_CHANNELS:
+        raise HTTPException(status_code=400, detail=f"Invalid channel: {request.channel}")
+
     try:
-        draft = agent_service.draft_customer_communication(request.orderId, request.instruction)
+        draft = agent_service.draft_customer_communication(
+            request.orderId, request.instruction, request.channel
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except RuntimeError as exc:
@@ -75,6 +87,11 @@ def draft_communication(request: DraftCommunicationRequest, admin: AdminIdentity
         entity_type="notifications",
         entity_id=draft["id"],
         before=None,
-        after={"status": draft["status"], "requestedBy": admin.id, "instruction": request.instruction},
+        after={
+            "status": draft["status"],
+            "requestedBy": admin.id,
+            "instruction": request.instruction,
+            "channel": draft["channel"],
+        },
     )
     return draft

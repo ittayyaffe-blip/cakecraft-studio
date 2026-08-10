@@ -37,6 +37,11 @@ class MorningBriefingResponse(BaseModel):
 class DraftCommunicationRequest(BaseModel):
     orderId: str
     instruction: str | None = None
+    # Staff's Email/WhatsApp choice from the Order Detail drawer. Optional
+    # and defaulting to None (not "email" directly) so the route's own
+    # validation — not Pydantic — is what applies agent_service.py's
+    # "missing means email" default, keeping that one rule in one place.
+    channel: str | None = None
 
 
 class DraftCommunicationResponse(AdminNotification):
