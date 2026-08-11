@@ -24,7 +24,7 @@ from app.schemas.admin_order import AdminOrderCustomer as NotificationCustomer
 
 class AdminNotification(BaseModel):
     id: str
-    order_id: str
+    order_id: str | None = None
     customer_id: str
     event: str
     channel: str | None = None
