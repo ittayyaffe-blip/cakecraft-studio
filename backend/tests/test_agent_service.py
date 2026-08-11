@@ -968,6 +968,75 @@ def test_kosher_certification_request_is_never_confirmed():
     assert "yes, it is kosher" not in inserted_payload["body"].lower()
 
 
+def test_kosher_denial_prompt_instructs_a_direct_answer_without_promising_followup():
+    # Business policy simplification: CakeCraft never holds religious
+    # certification -- a permanent, definitive fact -- so the prompt must
+    # tell Claude to state that plainly, not defer to "the team will
+    # confirm"/"is this a firm requirement" for something already fully
+    # and permanently settled.
+    fake_chunks = [{"title": "Dietary, Allergy & Religious Requirements Policy", "content": "CakeCraft does not hold Kosher certification.", "source_file": "dietary_allergy_religious_policy.md"}]
+    fake_response = _fake_claude_json_response(
+        intent="RELIGIOUS_DIETARY", requestsUnsupportedGuarantee=True,
+        subject="Re: kosher", body="We are not religiously certified.",
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
+
+        agent_service.draft_reply_to_inbound_message(
+            _fake_inbound_message(body="Is it a kosher cake?"), _FAKE_INBOUND_CUSTOMER, None
+        )
+
+    sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
+    normalized = " ".join(sent_prompt.split())
+    assert "do not promise the team will investigate or follow up" in normalized
+    assert "say so plainly and warmly as a complete answer" in normalized
+
+
+def test_kosher_definitive_denial_is_accepted_as_a_complete_answer():
+    # A direct, warm, non-escalating denial (the new desired style) must
+    # flow through as a normal drafted reply, not get forced into the
+    # "unable to answer" fallback just for not asking a clarifying
+    # question or promising a follow-up.
+    fake_chunks = [{"title": "Dietary, Allergy & Religious Requirements Policy", "content": "CakeCraft does not hold Kosher certification.", "source_file": "dietary_allergy_religious_policy.md"}]
+    direct_body = (
+        "Dear Ittay,\n\nThank you for reaching out, and congratulations again on your upcoming wedding!\n\n"
+        "We want to be completely transparent: our cakes are not religiously certified, including kosher "
+        "certification, so we cannot describe this cake as kosher-certified.\n\nWe take great care in "
+        "selecting high-quality ingredients and preparing every cake with the same attention to quality "
+        "and detail.\n\nWarmly,\nThe CakeCraft Studio Team"
+    )
+    fake_response = _fake_claude_json_response(
+        intent="RELIGIOUS_DIETARY", requestsUnsupportedGuarantee=True, requiresHumanReview=False,
+        reviewReason=None, subject="Re: Your Question About the Cake", body=direct_body,
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
+
+        result = agent_service.draft_reply_to_inbound_message(
+            _fake_inbound_message(body="Is it a kosher cake?"), _FAKE_INBOUND_CUSTOMER, None
+        )
+
+    assert result["ai_status"] == "drafted"  # not forced into the unable-to-answer fallback
+    assert result["handling"] == "red"  # requestsUnsupportedGuarantee still escalates -- unchanged safety floor
+    inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    body_lower = inserted_payload["body"].lower()
+    assert "not religiously certified" in body_lower
+    for forbidden in ("firm requirement", "will investigate", "let us know if this is", "will follow up"):
+        assert forbidden not in body_lower
+
+
 def test_vegan_question_answered_when_verified_in_knowledge():
     # "Verified" here means the fact is explicitly stated in retrieved
     # CakeCraft knowledge -- the only mechanism this project has for a

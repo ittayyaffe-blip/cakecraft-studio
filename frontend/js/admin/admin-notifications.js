@@ -243,18 +243,33 @@ function buildPreviewBlock(notification, { editable }) {
   return wrap;
 }
 
-function buildActionBar(notification) {
+function buildActionBar(notification, { sendError } = {}) {
   const bar = document.createElement("div");
   bar.className = "notification-actions";
 
   const errorEl = document.createElement("p");
   errorEl.className = "admin-state admin-state--error is-hidden";
   errorEl.setAttribute("role", "alert");
+  if (sendError) {
+    errorEl.textContent = `Send failed: ${sendError}`;
+    errorEl.classList.remove("is-hidden");
+  }
 
   const runAction = async (actionFn) => {
     errorEl.classList.add("is-hidden");
     try {
-      await actionFn(notification.id);
+      const result = await actionFn(notification.id);
+      // send() reports a real delivery failure as a 200 with
+      // status: "failed" (never sent, never thrown, never retried
+      // automatically -- see notification_service.send()), not an HTTP
+      // error, so it needs checking directly: the adapter's error text
+      // only exists on this direct response, not on a later GET, so a
+      // plain drawer refresh would lose it.
+      if (result && result.status === "failed" && result.error) {
+        renderNotificationDetail(result, { sendError: result.error });
+        loadNotifications();
+        return;
+      }
       await openNotificationDrawer(notification.id);
       loadNotifications();
     } catch (error) {
@@ -272,31 +287,18 @@ function buildActionBar(notification) {
     bar.appendChild(btn);
   };
 
-  if (notification.status === "draft") {
-    addButton("Submit for Approval", submitNotification, { primary: true });
-  }
-
-  if (notification.status === "awaiting_approval") {
-    // Approve is admin-role only on the backend (require_role("admin"));
-    // hiding it for non-admins here is a UX nicety, not the real
-    // enforcement — the server rejects it with 403 regardless.
-    if (isCurrentAdminRole("admin")) {
-      addButton("Approve", approveNotification, { primary: true });
-    }
-    addButton("Return to Draft", returnNotificationToDraft);
-  }
-
-  if (notification.status === "approved") {
-    addButton("Send", sendNotification, { primary: true });
-    addButton("Return to Draft", returnNotificationToDraft);
-  }
-
-  if (notification.status === "failed") {
-    // Real as of Sprint 3 (Communication Adapter + Gmail) — send() can
-    // now genuinely fail (bad recipient, provider error), not just
-    // succeed-as-a-stub. Same recovery path as an approved notification
-    // someone wants to hold back: fix it in draft, then resubmit.
-    addButton("Return to Draft", returnNotificationToDraft, { primary: true });
+  // Simplified workflow: draft -> Send -> sent/failed. No separate
+  // submit-for-approval/approve step (removed -- it only added clicks at
+  // this project's current stage, not a real second decision-maker); the
+  // one safety principle that step existed for is unchanged, a draft is
+  // never sent automatically, this button is the one human click that
+  // ever triggers send(). "failed" gets the exact same action -- retry is
+  // just clicking Send again, no extra step to get back to draft first.
+  // awaiting_approval/approved stay sendable too (see
+  // notification_service._SEND_ALLOWED_FROM) purely so nothing created by
+  // the old workflow, before this change, is ever stuck with no action.
+  if (["draft", "awaiting_approval", "approved", "failed"].includes(notification.status)) {
+    addButton(notification.status === "failed" ? "Retry Send" : "Send", sendNotification, { primary: true });
   }
 
   if (bar.children.length === 0) {
@@ -313,7 +315,7 @@ function buildActionBar(notification) {
   return bar;
 }
 
-function renderNotificationDetail(notification) {
+function renderNotificationDetail(notification, { sendError } = {}) {
   const body = document.getElementById("notificationDrawerBody");
   body.innerHTML = "";
 
@@ -349,13 +351,15 @@ function renderNotificationDetail(notification) {
   previewHeading.className = "admin-drawer__section-heading";
   previewHeading.textContent = "Preview";
   body.appendChild(previewHeading);
-  body.appendChild(buildPreviewBlock(notification, { editable: notification.status === "draft" }));
+  body.appendChild(
+    buildPreviewBlock(notification, { editable: notification.status === "draft" || notification.status === "failed" })
+  );
 
   const actionsHeading = document.createElement("h3");
   actionsHeading.className = "admin-drawer__section-heading";
   actionsHeading.textContent = "Actions";
   body.appendChild(actionsHeading);
-  body.appendChild(buildActionBar(notification));
+  body.appendChild(buildActionBar(notification, { sendError }));
 }
 
 async function openNotificationDrawer(notificationId) {

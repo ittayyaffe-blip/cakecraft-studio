@@ -276,10 +276,12 @@ def get_notification_by_id(notification_id: str) -> dict | None:
 
 def update_draft_content(notification: dict, subject: str, body: str) -> dict:
     """Edit a notification's rendered content. Raises ValueError unless
-    it's currently in `draft` — once submitted, use return_to_draft to get
-    back here first rather than editing an in-flight approval.
+    it's currently in `draft` or `failed` — a failed send is exactly the
+    moment editing matters most (e.g. a bad recipient), and simplified
+    workflow (draft -> send -> sent/failed) has no separate "return to
+    draft" step to get back here first before retrying.
     """
-    if notification["status"] != "draft":
+    if notification["status"] not in ("draft", "failed"):
         raise ValueError(f"Cannot edit notification in status '{notification['status']}'")
 
     supabase.table("notifications").update({"subject": subject, "body": body}).eq(
@@ -369,14 +371,28 @@ def _dispatch(notification: dict) -> tuple[str, DeliveryResult]:
     return channel, adapter.send(notification)
 
 
+# draft -> sent (success) / failed (delivery error) -- a human clicked
+# Send, that's the only approval this project's current stage needs (see
+# this function's own docstring). `approved` stays valid too so nothing
+# left over from the old submit/approve workflow gets stranded; `failed`
+# is valid so a retry is just clicking Send again, no extra step.
+_SEND_ALLOWED_FROM = ("draft", "approved", "failed")
+
+
 def send(notification: dict, *, sent_at: str | None = None) -> dict:
-    """approved -> sent, or approved -> failed if a configured adapter's
-    real delivery attempt fails (see _dispatch()). This is the channel-
-    agnostic dispatch surface Sprint 1 designed: a real channel adapter
-    (Gmail, wired in this sprint; WhatsApp next) plugs into _dispatch()
-    via the Communication Adapter registry, and neither the queue,
-    drafting, nor approval steps above needed to change for that to
-    happen.
+    """draft/failed (or approved, see _SEND_ALLOWED_FROM) -> sent, or ->
+    failed if a configured adapter's real delivery attempt fails (see
+    _dispatch()). Simplified workflow: a human writes/edits a draft, then
+    clicks Send — no separate submit-for-approval/approve step, since at
+    this project's stage that intermediate only added clicks without a
+    real second decision-maker. The one safety principle that step
+    existed for is unchanged: a draft is *never* sent automatically, only
+    this function (called from the one /send route) ever dispatches, and
+    it always requires a human's click to reach it.
+
+    This is still the channel-agnostic dispatch surface Sprint 1
+    designed: a real channel adapter (Gmail, wired in Sprint 3) plugs into
+    _dispatch() via the Communication Adapter registry.
 
     `sent_at` is a keyword-only override used exclusively by
     tools/demo_data_seed.py to backdate a seeded notification's send time
@@ -385,7 +401,7 @@ def send(notification: dict, *, sent_at: str | None = None) -> dict:
     passes it, so sent_at keeps recording the real current time exactly as
     before this parameter existed.
     """
-    if notification["status"] != "approved":
+    if notification["status"] not in _SEND_ALLOWED_FROM:
         raise ValueError(f"Cannot move notification from '{notification['status']}' to 'sent'")
 
     channel, result = _dispatch(notification)
@@ -394,7 +410,7 @@ def send(notification: dict, *, sent_at: str | None = None) -> dict:
         resolved_sent_at = sent_at or datetime.now(timezone.utc).isoformat()
         return _transition(
             notification,
-            ("approved",),
+            _SEND_ALLOWED_FROM,
             "sent",
             extra={
                 "sent_at": resolved_sent_at,
@@ -403,4 +419,11 @@ def send(notification: dict, *, sent_at: str | None = None) -> dict:
             },
         )
 
-    return _transition(notification, ("approved",), "failed", extra={"channel": channel})
+    updated = _transition(notification, _SEND_ALLOWED_FROM, "failed", extra={"channel": channel})
+    # Not persisted (no error column on `notifications` -- avoiding a
+    # migration for this fix, see admin_notification.py's AdminNotification.
+    # error), so this only ever reaches the one response that just
+    # produced it (see admin-notifications.js's runAction) -- the status
+    # badge alone still shows "Failed" on any later reload.
+    updated["error"] = result.error
+    return updated

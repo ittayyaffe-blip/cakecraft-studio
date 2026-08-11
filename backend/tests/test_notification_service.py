@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.services import notification_service, notification_templates
+from app.services.communication.base import DeliveryResult
 
 ORDER = {
     "id": "order-1",
@@ -122,9 +123,19 @@ def test_return_to_draft_rejects_queued():
 
 
 def test_send_rejects_non_approved():
+    # Renamed nothing -- "approved" is still one of three valid starting
+    # statuses (see _SEND_ALLOWED_FROM), "awaiting_approval" still isn't.
     _expect_value_error(
         lambda: notification_service.send({"status": "awaiting_approval", "id": "x"})
     )
+
+
+def test_send_rejects_queued():
+    _expect_value_error(lambda: notification_service.send({"status": "queued", "id": "x"}))
+
+
+def test_send_rejects_already_sent():
+    _expect_value_error(lambda: notification_service.send({"status": "sent", "id": "x"}))
 
 
 def test_update_draft_content_rejects_non_draft():
@@ -133,6 +144,107 @@ def test_update_draft_content_rejects_non_draft():
             {"status": "approved", "id": "x", "subject": "old", "body": "old"}, "new", "new"
         )
     )
+
+
+def test_update_draft_content_accepts_failed_so_it_can_be_fixed_before_a_retry():
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+            data=[{}]
+        )
+        mock_supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = SimpleNamespace(
+            data={"id": "notif-4", "status": "failed", "subject": "new", "body": "new"}
+        )
+        result = notification_service.update_draft_content(
+            {"status": "failed", "id": "notif-4", "subject": "old", "body": "old"}, "new", "new"
+        )
+    assert result["status"] == "failed"
+
+
+# --- Simplified workflow (draft -> send -> sent/failed) --------------------
+
+
+def _mock_update_and_refetch(mock_supabase, updated_row: dict) -> None:
+    mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+        data=[updated_row]
+    )
+    mock_supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = SimpleNamespace(
+        data=updated_row
+    )
+
+
+def test_send_from_draft_succeeds_and_populates_sent_at():
+    # No more submit-for-approval/approve step -- a human writes/edits a
+    # draft, clicks Send, that's the one approval this stage needs.
+    notification = {"id": "notif-1", "status": "draft", "channel": "email"}
+    updated_row = {"id": "notif-1", "status": "sent", "channel": "email", "sent_at": "2026-08-11T00:00:00+00:00"}
+    with (
+        patch.object(notification_service, "supabase") as mock_supabase,
+        patch.object(
+            notification_service, "_dispatch",
+            return_value=("email", DeliveryResult(success=True, provider_message_id="msg-1")),
+        ),
+    ):
+        _mock_update_and_refetch(mock_supabase, updated_row)
+        result = notification_service.send(notification)
+
+    assert result["status"] == "sent"
+    update_payload = mock_supabase.table.return_value.update.call_args.args[0]
+    assert update_payload["status"] == "sent"
+    assert update_payload["sent_at"]
+    assert update_payload["provider_message_id"] == "msg-1"
+    mock_supabase.table.return_value.insert.assert_not_called()  # no duplicate row
+
+
+def test_send_delivery_failure_lands_on_failed_with_a_usable_error():
+    notification = {"id": "notif-2", "status": "draft", "channel": "email"}
+    updated_row = {"id": "notif-2", "status": "failed", "channel": "email"}
+    with (
+        patch.object(notification_service, "supabase") as mock_supabase,
+        patch.object(
+            notification_service, "_dispatch",
+            return_value=("email", DeliveryResult(success=False, error="Network is unreachable")),
+        ),
+    ):
+        _mock_update_and_refetch(mock_supabase, updated_row)
+        result = notification_service.send(notification)
+
+    assert result["status"] == "failed"
+    assert result["error"] == "Network is unreachable"  # surfaced to the admin, not just logged
+    mock_supabase.table.return_value.insert.assert_not_called()
+
+
+def test_send_retries_from_failed_and_can_succeed():
+    notification = {"id": "notif-3", "status": "failed", "channel": "email"}
+    updated_row = {"id": "notif-3", "status": "sent", "channel": "email"}
+    with (
+        patch.object(notification_service, "supabase") as mock_supabase,
+        patch.object(
+            notification_service, "_dispatch",
+            return_value=("email", DeliveryResult(success=True, provider_message_id="msg-2")),
+        ),
+    ):
+        _mock_update_and_refetch(mock_supabase, updated_row)
+        result = notification_service.send(notification)
+
+    assert result["status"] == "sent"
+    # Retrying re-attempts delivery on the SAME row -- never a new one.
+    mock_supabase.table.return_value.insert.assert_not_called()
+
+
+def test_send_success_does_not_carry_a_stale_error_field():
+    notification = {"id": "notif-5", "status": "failed", "channel": "email"}
+    updated_row = {"id": "notif-5", "status": "sent", "channel": "email"}
+    with (
+        patch.object(notification_service, "supabase") as mock_supabase,
+        patch.object(
+            notification_service, "_dispatch",
+            return_value=("email", DeliveryResult(success=True, provider_message_id="msg-3")),
+        ),
+    ):
+        _mock_update_and_refetch(mock_supabase, updated_row)
+        result = notification_service.send(notification)
+
+    assert "error" not in result
 
 
 # --- Communications Workspace (Step 2): channel default + list filters ----

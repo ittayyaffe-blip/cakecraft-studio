@@ -17,6 +17,8 @@ here — see docs/SPRINT3_COMMUNICATION_ADAPTER.md and
 docs/SPRINT4_WHATSAPP_ADAPTER.md.
 """
 
+from unittest.mock import patch
+
 from app.services import communication, notification_service
 from app.services.communication import gmail_adapter, whatsapp_adapter
 from app.services.communication.base import CommunicationAdapter, DeliveryResult
@@ -62,6 +64,30 @@ def test_build_message_uses_notification_fields():
     assert message.get_content().strip() == "Come get it."
 
 
+def test_ipv4_smtp_forces_ipv4_resolution_before_connecting():
+    # Root cause of the production send failures: plain smtplib.SMTP tries
+    # whatever getaddrinfo() returns first, which on Railway's containers
+    # is smtp.gmail.com's IPv6 address -- and Railway's network doesn't
+    # actually route IPv6 out, so that first attempt dies with "OSError:
+    # [Errno 101] Network is unreachable" (confirmed in production logs).
+    # _get_socket must resolve AF_INET specifically and connect to that.
+    fake_ipv4 = "142.250.1.109"
+    with (
+        patch("app.services.communication.gmail_adapter.socket.getaddrinfo") as mock_getaddrinfo,
+        patch("app.services.communication.gmail_adapter.socket.create_connection") as mock_create_connection,
+    ):
+        mock_getaddrinfo.return_value = [(2, 1, 6, "", (fake_ipv4, 587))]
+        instance = gmail_adapter._IPv4SMTP.__new__(gmail_adapter._IPv4SMTP)
+        instance.source_address = None
+
+        instance._get_socket("smtp.gmail.com", 587, 10)
+
+    getaddrinfo_args = mock_getaddrinfo.call_args.args
+    assert getaddrinfo_args[0] == "smtp.gmail.com"
+    assert getaddrinfo_args[2] == gmail_adapter.socket.AF_INET
+    mock_create_connection.assert_called_once_with((fake_ipv4, 587), 10, source_address=None)
+
+
 def test_build_message_raises_for_missing_customer_email():
     try:
         gmail_adapter._build_message({"subject": "x", "body": "y", "customers": {}})
@@ -87,9 +113,13 @@ def test_dispatch_falls_back_to_stub_when_registered_but_unconfigured():
     assert result.success is True
 
 
-def test_send_rejects_non_approved_before_attempting_any_dispatch():
+def test_send_rejects_invalid_status_before_attempting_any_dispatch():
+    # "draft" used to be rejected here too, before the simplified workflow
+    # (draft -> send -> sent/failed) made it a valid starting status for
+    # send() -- see notification_service._SEND_ALLOWED_FROM. "queued" (a
+    # notification whose template hasn't even rendered yet) still isn't.
     try:
-        notification_service.send({"status": "draft", "id": "x"})
+        notification_service.send({"status": "queued", "id": "x"})
     except ValueError:
         pass
     else:

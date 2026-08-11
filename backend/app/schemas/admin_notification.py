@@ -71,6 +71,11 @@ class AdminNotification(BaseModel):
     provider_message_id: str | None = None
     sent_at: datetime | None = None
     created_at: datetime
+    # Not a DB column -- only ever set (by notification_service.send()) on
+    # the direct response to a /send call that just failed, so the admin
+    # sees exactly why immediately. Absent on every other response,
+    # including a later GET of this same notification.
+    error: str | None = None
     customers: NotificationCustomer | None = None
     orders: AdminNotificationOrder | None = None
     # A reverse embed always returns a list (see _NOTIFICATION_SELECT's

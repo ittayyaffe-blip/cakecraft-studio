@@ -22,6 +22,7 @@ here.
 
 import logging
 import smtplib
+import socket
 from email.message import EmailMessage
 from email.utils import make_msgid
 
@@ -35,6 +36,23 @@ channel = "email"
 _SMTP_HOST = "smtp.gmail.com"
 _SMTP_PORT = 587
 _SMTP_TIMEOUT_SECONDS = 10
+
+
+class _IPv4SMTP(smtplib.SMTP):
+    """Plain smtplib.SMTP resolves smtp.gmail.com via whatever getaddrinfo()
+    returns first, which on Railway's containers is its IPv6 (AAAA) address
+    -- Railway's network doesn't actually route IPv6 out, so that first
+    connection attempt dies immediately with "OSError: [Errno 101] Network
+    is unreachable" (confirmed in production logs; every real send attempt
+    hit exactly this). Forcing IPv4-only resolution here is the minimal
+    fix. TLS hostname verification is unaffected: starttls() still checks
+    the certificate against the original hostname passed to __init__, not
+    the resolved IP this override connects to.
+    """
+
+    def _get_socket(self, host, port, timeout):
+        ipv4_addr = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
+        return socket.create_connection((ipv4_addr, port), timeout, source_address=self.source_address)
 
 
 def is_configured() -> bool:
@@ -86,7 +104,7 @@ def send(notification: dict) -> DeliveryResult:
     message["Message-Id"] = message_id
 
     try:
-        with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=_SMTP_TIMEOUT_SECONDS) as smtp:
+        with _IPv4SMTP(_SMTP_HOST, _SMTP_PORT, timeout=_SMTP_TIMEOUT_SECONDS) as smtp:
             smtp.starttls()
             smtp.login(settings.gmail_address, settings.gmail_app_password)
             smtp.send_message(message)
