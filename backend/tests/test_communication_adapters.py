@@ -1,5 +1,5 @@
 """Dependency-free self-check for the Communication Adapter abstraction
-and the Gmail/WhatsApp adapters' pure logic — no network/DB/SMTP/HTTP
+and the Gmail/WhatsApp adapters' pure logic — no network/DB/HTTP
 connection required. Run from `backend/`:
 
     python -m tests.test_communication_adapters
@@ -11,13 +11,13 @@ and notification_service._dispatch's critical "not registered vs.
 registered-but-unconfigured — both fall back to the stub, neither is a
 real failure" distinction, which is what keeps
 tools/demo_data_seed.py's simulated "sent" notifications realistic
-without real Gmail/WhatsApp credentials configured. Real delivery (an
-actual SMTP or WhatsApp Cloud API call) is intentionally never exercised
-here — see docs/SPRINT3_COMMUNICATION_ADAPTER.md and
+without real Resend/WhatsApp credentials configured. Real delivery (an
+actual Resend or WhatsApp Cloud API call) is intentionally never
+exercised here — see docs/SPRINT3_COMMUNICATION_ADAPTER.md and
 docs/SPRINT4_WHATSAPP_ADAPTER.md.
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.services import communication, notification_service
 from app.services.communication import gmail_adapter, whatsapp_adapter
@@ -37,9 +37,9 @@ def test_get_adapter_returns_none_for_unknown_channel():
 
 
 def test_gmail_not_configured_in_this_environment():
-    # True today (no GMAIL_ADDRESS/GMAIL_APP_PASSWORD set anywhere) — this
-    # is also what keeps the rest of this file safe to run with no real
-    # credentials and no network access.
+    # True today (no RESEND_API_KEY set anywhere) — this is also what
+    # keeps the rest of this file safe to run with no real credentials
+    # and no network access.
     assert gmail_adapter.is_configured() is False
 
 
@@ -52,49 +52,74 @@ def test_gmail_send_without_config_returns_clean_failure_no_network():
     assert "not configured" in result.error
 
 
-def test_build_message_uses_notification_fields():
+def test_build_payload_uses_notification_fields_and_sets_reply_to():
     notification = {
         "subject": "Your cake is ready!",
         "body": "Come get it.",
         "customers": {"email": "jane@example.com"},
     }
-    message = gmail_adapter._build_message(notification)
-    assert message["Subject"] == "Your cake is ready!"
-    assert message["To"] == "jane@example.com"
-    assert message.get_content().strip() == "Come get it."
+    with patch.object(gmail_adapter.settings, "gmail_address", "mybestcake2002@gmail.com"):
+        payload = gmail_adapter._build_payload(notification)
+    assert payload["to"] == ["jane@example.com"]
+    assert payload["subject"] == "Your cake is ready!"
+    assert payload["text"] == "Come get it."
+    # Sent from Resend's shared sandbox domain (gmail.com isn't CakeCraft's
+    # to verify with a third party) but replies still reach the real inbox.
+    assert payload["reply_to"] == "mybestcake2002@gmail.com"
 
 
-def test_ipv4_smtp_forces_ipv4_resolution_before_connecting():
-    # Root cause of the production send failures: plain smtplib.SMTP tries
-    # whatever getaddrinfo() returns first, which on Railway's containers
-    # is smtp.gmail.com's IPv6 address -- and Railway's network doesn't
-    # actually route IPv6 out, so that first attempt dies with "OSError:
-    # [Errno 101] Network is unreachable" (confirmed in production logs).
-    # _get_socket must resolve AF_INET specifically and connect to that.
-    fake_ipv4 = "142.250.1.109"
-    with (
-        patch("app.services.communication.gmail_adapter.socket.getaddrinfo") as mock_getaddrinfo,
-        patch("app.services.communication.gmail_adapter.socket.create_connection") as mock_create_connection,
-    ):
-        mock_getaddrinfo.return_value = [(2, 1, 6, "", (fake_ipv4, 587))]
-        instance = gmail_adapter._IPv4SMTP.__new__(gmail_adapter._IPv4SMTP)
-        instance.source_address = None
-
-        instance._get_socket("smtp.gmail.com", 587, 10)
-
-    getaddrinfo_args = mock_getaddrinfo.call_args.args
-    assert getaddrinfo_args[0] == "smtp.gmail.com"
-    assert getaddrinfo_args[2] == gmail_adapter.socket.AF_INET
-    mock_create_connection.assert_called_once_with((fake_ipv4, 587), 10, source_address=None)
-
-
-def test_build_message_raises_for_missing_customer_email():
+def test_build_payload_raises_for_missing_customer_email():
     try:
-        gmail_adapter._build_message({"subject": "x", "body": "y", "customers": {}})
+        gmail_adapter._build_payload({"subject": "x", "body": "y", "customers": {}})
     except ValueError:
         pass
     else:
-        raise AssertionError("expected ValueError for a notification with no customer email")
+        raise AssertionError("expected ValueError, none was raised")
+
+
+def test_send_posts_to_resend_and_returns_provider_message_id():
+    notification = {
+        "id": "notif-1", "subject": "Hi", "body": "Hi there", "customers": {"email": "jane@example.com"},
+    }
+    fake_response = MagicMock(status_code=200)
+    fake_response.json.return_value = {"id": "resend-msg-1"}
+    with (
+        patch.object(gmail_adapter.settings, "resend_api_key", "re_fake_key_for_test"),
+        patch.object(gmail_adapter.httpx, "post", return_value=fake_response) as mock_post,
+    ):
+        result = gmail_adapter.send(notification)
+
+    assert result.success is True
+    assert result.provider_message_id == "resend-msg-1"
+    call_kwargs = mock_post.call_args.kwargs
+    assert call_kwargs["headers"]["Authorization"] == "Bearer re_fake_key_for_test"
+    assert call_kwargs["json"]["to"] == ["jane@example.com"]
+
+
+def test_send_reports_resend_api_error_cleanly():
+    notification = {"id": "notif-2", "subject": "Hi", "body": "Hi", "customers": {"email": "jane@example.com"}}
+    fake_response = MagicMock(status_code=422)
+    fake_response.json.return_value = {"message": "Invalid `from` field"}
+    with (
+        patch.object(gmail_adapter.settings, "resend_api_key", "re_fake_key_for_test"),
+        patch.object(gmail_adapter.httpx, "post", return_value=fake_response),
+    ):
+        result = gmail_adapter.send(notification)
+
+    assert result.success is False
+    assert result.error == "Invalid `from` field"
+
+
+def test_send_never_raises_on_a_network_exception():
+    notification = {"id": "notif-3", "subject": "Hi", "body": "Hi", "customers": {"email": "jane@example.com"}}
+    with (
+        patch.object(gmail_adapter.settings, "resend_api_key", "re_fake_key_for_test"),
+        patch.object(gmail_adapter.httpx, "post", side_effect=TimeoutError("timed out")),
+    ):
+        result = gmail_adapter.send(notification)
+
+    assert result.success is False
+    assert "timed out" in result.error
 
 
 def test_dispatch_falls_back_to_stub_when_channel_unregistered():

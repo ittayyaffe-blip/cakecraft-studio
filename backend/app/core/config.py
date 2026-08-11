@@ -43,6 +43,18 @@ class Settings:
     gmail_address: str | None = os.environ.get("GMAIL_ADDRESS")
     gmail_app_password: str | None = os.environ.get("GMAIL_APP_PASSWORD")
 
+    # Resend (https://resend.com) — replaces raw SMTP as of this fix: Railway
+    # blocks outbound SMTP ports entirely at the network level (confirmed by
+    # direct in-container testing: ports 25/465/587/2525 to smtp.gmail.com
+    # all silently time out, while HTTPS egress works instantly), so no
+    # amount of SMTP-side code can ever deliver mail from this host — see
+    # gmail_adapter.py. Resend's HTTP API sends over the same HTTPS port
+    # every other outbound call in this project already uses. Same
+    # feature-flag-by-presence contract as every setting above: unset means
+    # gmail_adapter.is_configured() is False and the app degrades exactly as
+    # it always has with no email credentials configured.
+    resend_api_key: str | None = os.environ.get("RESEND_API_KEY")
+
     # WhatsApp Business Cloud API (Meta) — Sprint 4. Same contract as the
     # Gmail settings above: both unset (the default today) means
     # app/services/communication/whatsapp_adapter.py reports itself as
