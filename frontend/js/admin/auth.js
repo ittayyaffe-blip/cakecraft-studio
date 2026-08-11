@@ -13,7 +13,18 @@ function saveAdminSession(session) {
 
 function getAdminSession() {
   const raw = sessionStorage.getItem(ADMIN_SESSION_KEY);
-  return raw ? JSON.parse(raw) : null;
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Corrupted/non-JSON value -- treat exactly like "no session" rather
+    // than letting the throw escape into getAuthHeader()/adminFetch(),
+    // where it previously aborted before fetch() ever ran (zero network
+    // requests, masked by loadNotifications()'s generic catch-all error).
+    sessionStorage.removeItem(ADMIN_SESSION_KEY);
+    return null;
+  }
 }
 
 function clearAdminSession() {
