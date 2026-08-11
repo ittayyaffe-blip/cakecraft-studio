@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import collections, designer, health, orders, templates
+from app.api.routes import chat, collections, designer, health, orders, templates
 from app.api.routes.admin import agent as admin_agent
 from app.api.routes.admin import auth as admin_auth
 from app.api.routes.admin import briefing as admin_briefing
@@ -31,6 +31,7 @@ app.include_router(templates.router)
 app.include_router(collections.router)
 app.include_router(designer.router)
 app.include_router(orders.router)
+app.include_router(chat.router)
 app.include_router(admin_auth.router)
 app.include_router(admin_dashboard.router)
 app.include_router(admin_briefing.router)

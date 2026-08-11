@@ -78,6 +78,38 @@ def test_find_open_order_for_customer_no_orders_at_all():
     assert status == "none"
 
 
+def test_find_or_create_customer_reuses_an_existing_row_by_email():
+    from types import SimpleNamespace
+
+    with patch.object(order_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": "cust-existing"}]
+        )
+        customer_id = order_service.find_or_create_customer("Jane Doe", None, "jane@example.com")
+
+    assert customer_id == "cust-existing"
+    mock_supabase.table.return_value.insert.assert_not_called()
+
+
+def test_find_or_create_customer_creates_a_new_row_when_none_matches():
+    from types import SimpleNamespace
+
+    with patch.object(order_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = SimpleNamespace(
+            data=[]
+        )
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": "cust-new"}]
+        )
+        customer_id = order_service.find_or_create_customer("New Customer", None, "new@example.com")
+
+    assert customer_id == "cust-new"
+    inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    # No phone required (the chat widget's lightweight identity capture
+    # never collects one) -- customers.phone is nullable for exactly this.
+    assert inserted_payload == {"name": "New Customer", "phone": None, "email": "new@example.com"}
+
+
 def test_find_open_order_for_customer_multiple_open_orders_is_ambiguous():
     orders = [
         {"id": "order-1", "status": "confirmed"},

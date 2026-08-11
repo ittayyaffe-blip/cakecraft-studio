@@ -8,7 +8,14 @@ def _find_option(options: dict, key: str, option_id: str) -> dict | None:
     return next((item for item in options[key] if item["id"] == option_id), None)
 
 
-def _find_or_create_customer(name: str, phone: str, email: str) -> str:
+def find_or_create_customer(name: str, phone: str | None, email: str) -> str:
+    """Find an existing customer by email, or create a lightweight one.
+    Not order-specific despite living here (this module owns customer
+    creation because order checkout was its first caller) — reused as-is
+    by the chat widget's identity capture (see api/routes/chat.py),
+    which has no phone number to offer (`phone` is nullable on
+    `customers`, so `None` is a real, valid value here, not a workaround).
+    """
     existing = (
         supabase.table("customers").select("id").eq("email", email).limit(1).execute()
     )
@@ -55,7 +62,7 @@ def create_order(
 
     total_price = template["base_price"] + cake_size["price_adjustment"]
 
-    customer_id = _find_or_create_customer(
+    customer_id = find_or_create_customer(
         order["customer_name"], order["customer_phone"], order["customer_email"]
     )
 

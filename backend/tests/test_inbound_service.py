@@ -537,6 +537,94 @@ def test_process_order_note_never_raises_on_agent_failure():
     assert update_payload == {"ai_status": "failed"}
 
 
+# --- process_chat_message (website live chat widget) -----------------------
+
+
+def test_process_chat_message_creates_inbound_message_and_returns_answer():
+    mock_supabase, queries = _make_supabase_mock(
+        SimpleNamespace(data=None),  # find existing: not found (fresh uuid every time)
+        SimpleNamespace(data=[_fake_inbound_row(
+            channel="email", provider_message_id="chat:whatever", sender_identifier="jane@example.com",
+            subject="Website chat question", body="Is it gluten-free?",
+        )]),  # insert
+        SimpleNamespace(data=[]),  # get_recent_conversation: no prior messages
+        SimpleNamespace(data=[_fake_inbound_row(
+            customer_id="cust-1", order_id=None, order_match_status="none",
+            ai_status="drafted", draft_notification_id="notif-1",
+        )]),  # update
+    )
+    with (
+        patch.object(inbound_service, "supabase", mock_supabase),
+        patch.object(inbound_service, "agent_service") as mock_agent_service,
+    ):
+        mock_agent_service.answer_customer_question.return_value = {
+            "ai_status": "drafted", "notification": {"id": "notif-1"}, "intent": "ALLERGY_DIETARY",
+            "handling": "yellow", "review_reason": None, "knowledge_sources": [], "answer": "Yes, it's gluten-free.",
+        }
+        result = inbound_service.process_chat_message("Is it gluten-free?", FAKE_CUSTOMER, None, "none")
+
+    inserted_payload = queries[1].insert.call_args.args[0]
+    assert inserted_payload["channel"] == "email"  # not a new channel value -- no CHECK-constraint migration
+    assert inserted_payload["provider_message_id"].startswith("chat:")
+    assert inserted_payload["sender_identifier"] == FAKE_CUSTOMER["email"]
+    assert inserted_payload["body"] == "Is it gluten-free?"  # preserved exactly
+
+    mock_agent_service.answer_customer_question.assert_called_once()
+    call_args = mock_agent_service.answer_customer_question.call_args
+    assert call_args.args[0] == "Is it gluten-free?"
+    assert call_args.args[1] == FAKE_CUSTOMER
+    assert call_args.args[2] is None
+    assert call_args.kwargs["order_match_status"] == "none"
+
+    # The one thing every other inbound_service function does NOT need to
+    # return: the answer text itself, for the widget to show right now.
+    assert result == {"answer": "Yes, it's gluten-free.", "intent": "ALLERGY_DIETARY", "handling": "yellow"}
+
+
+def test_process_chat_message_links_the_real_order_when_one_exists():
+    mock_supabase, queries = _make_supabase_mock(
+        SimpleNamespace(data=None),
+        SimpleNamespace(data=[_fake_inbound_row(body="How's my cake coming along?")]),
+        SimpleNamespace(data=[]),
+        SimpleNamespace(data=[_fake_inbound_row(customer_id="cust-1", order_id="order-1", order_match_status="matched")]),
+    )
+    with (
+        patch.object(inbound_service, "supabase", mock_supabase),
+        patch.object(inbound_service, "agent_service") as mock_agent_service,
+    ):
+        mock_agent_service.answer_customer_question.return_value = {
+            "ai_status": "drafted", "notification": {"id": "notif-2"}, "intent": "ORDER_STATUS",
+            "handling": "green", "review_reason": None, "knowledge_sources": [], "answer": "It's in progress!",
+        }
+        inbound_service.process_chat_message("How's my cake coming along?", FAKE_CUSTOMER, FAKE_ORDER, "matched")
+
+    call_args = mock_agent_service.answer_customer_question.call_args
+    assert call_args.args[2] == FAKE_ORDER
+    update_payload = queries[3].update.call_args.args[0]
+    assert update_payload["order_id"] == "order-1"
+    assert update_payload["order_match_status"] == "matched"
+
+
+def test_process_chat_message_never_raises_on_agent_failure():
+    mock_supabase, queries = _make_supabase_mock(
+        SimpleNamespace(data=None),
+        SimpleNamespace(data=[_fake_inbound_row()]),
+        SimpleNamespace(data=[]),
+        SimpleNamespace(data=[_fake_inbound_row(ai_status="failed")]),
+    )
+    with (
+        patch.object(inbound_service, "supabase", mock_supabase),
+        patch.object(inbound_service, "agent_service") as mock_agent_service,
+    ):
+        mock_agent_service.answer_customer_question.side_effect = RuntimeError("Anthropic is down")
+        result = inbound_service.process_chat_message("Do you deliver?", FAKE_CUSTOMER, None, "none")
+
+    # Never raised, and the widget still gets a safe answer to show.
+    assert result["answer"]
+    update_payload = queries[3].update.call_args.args[0]
+    assert update_payload == {"ai_status": "failed"}
+
+
 # --- Inbox / source-message lookups -----------------------------------------
 
 

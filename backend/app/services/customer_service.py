@@ -119,7 +119,7 @@ def get_customer_by_id(customer_id: str) -> dict | None:
 def find_customer_by_email(email: str) -> tuple[dict | None, bool]:
     """Read-only customer identification for an inbound Email message
     (Step 3 — see inbound_service.py). Unlike order_service.
-    _find_or_create_customer, this never creates a row: an inbound
+    find_or_create_customer, this never creates a row: an inbound
     message from an address we don't recognize means "unknown customer",
     not "invent one" — the inbound message stays visible to staff either
     way (see the migration's own note on customer_id being nullable).

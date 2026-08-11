@@ -53,3 +53,17 @@ async function createOrder(order) {
 
   return response.json();
 }
+
+async function askChat(payload) {
+  const response = await fetch(`${API_BASE_URL}/chat/ask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+
+  return response.json();
+}

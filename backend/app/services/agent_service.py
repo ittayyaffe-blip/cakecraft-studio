@@ -19,16 +19,31 @@ Combines live operational data (briefing_service), the ML forecast
     (no changes to notification_service.py — see the function's own
     docstring for why the insert happens here directly).
 
-Human-in-the-loop, structurally, not by convention: nothing in this
-module ever calls notification_service.send() or any Communication
-Adapter. Every draft this Agent produces lands in the existing
-Notification Queue at `draft` status, going through the same
+Human-in-the-loop, structurally, not by convention, for email/WhatsApp:
+nothing in this module ever calls notification_service.send() or any
+Communication Adapter. Every draft bound for a real channel lands in the
+existing Notification Queue at `draft` status, going through the same
 submit -> approve -> send workflow a staff-authored draft already does
 — the Agent recommends and drafts, staff decides.
+
+One deliberate exception: answer_customer_question() (the website live
+chat widget) shows its answer directly to the customer, no human click
+first — that's the one place in this project an AI-generated response
+reaches a customer without going through the approval queue, because a
+chat that only replies whenever staff approve a draft isn't really a
+chat. It still never calls notification_service.send()/a Communication
+Adapter either — it inserts its own record at `channel="chat"`, a value
+no adapter is registered for, so it can never be dispatched as a real
+email/WhatsApp message even by mistake. It reuses the exact same
+guardrails (_compute_handling, the dietary/religious/allergy authority
+rules in the prompt below) as everything else here — see
+_classify_and_respond, the core both this and draft_reply_to_inbound_message
+share, so those rules exist in exactly one place.
 """
 
 import json
 import logging
+from datetime import datetime, timezone
 
 import anthropic
 
@@ -481,42 +496,32 @@ def _format_conversation_history(history: list[dict] | None) -> str:
     return "\n".join(lines)
 
 
-def draft_reply_to_inbound_message(
-    inbound_message: dict,
+def _classify_and_respond(
+    message_body: str,
     customer: dict,
     order: dict | None,
     *,
-    order_match_status: str = "none",
-    conversation_history: list[dict] | None = None,
+    order_match_status: str,
+    conversation_history: list[dict] | None,
+    channel_label: str,
+    subject_line: str,
 ) -> dict:
-    """The AI Agent's inbound-reply entry point: drafts a reply to an
-    inbound customer message, grounded in the existing RAG knowledge base
-    plus whatever order context is available — reuses every existing
-    piece (rag_service.retrieve, _claude, _parse_json_response, the same
-    `notifications` insert shape draft_customer_communication already
-    uses) rather than a second pipeline. inbound_service.py calls this
-    once a customer (and, where possible, an order) has already been
-    identified; this function never does that matching itself.
+    """The shared reasoning core of every AI-generated customer reply in
+    this project: RAG retrieval, the full authority-boundary prompt
+    (dietary/allergy/religious rules included), Claude classification,
+    and the application-owned _compute_handling guardrail. No database
+    write here and no notion of "draft" vs. "sent" — that's each
+    caller's own concern (see draft_reply_to_inbound_message, which
+    always creates a `draft` notification for a human to approve, and
+    answer_customer_question, which shows its answer to the customer
+    directly). Extracted so those two callers share exactly one copy of
+    this logic rather than two independently-maintained ones.
 
-    `channel` comes from `inbound_message["channel"]` — set by
-    inbound_service.py from which provider actually delivered the
-    message (Email vs. WhatsApp), never inferred from the message text
-    and never chosen by Claude. `order` may be None (no confidently
-    matched order — a prospective/general question has nothing to match
-    against, see the Step 3 migration's note on notifications.order_id
-    being nullable); `order_match_status` distinguishes "none" (no order
-    exists at all — fine for most questions) from "ambiguous" (several
-    open orders exist — the AI must not guess which one, and this alone
-    forces `handling` to at least "yellow", see _compute_handling).
-
-    Intent and handling (Step 3B) are both application-controlled:
-    Claude's own classification is validated against the fixed INTENTS
-    set (_validate_intent — an unrecognized value always becomes
-    "OTHER"), and `handling` is computed entirely by _compute_handling
-    from that validated intent plus a small number of app-owned escalation
-    signals — never read directly from anything Claude wrote. Claude
-    contributes *analysis* (what is this about, can I answer it, why
-    not); the application retains *authority* (what happens as a result).
+    `channel_label`/`subject_line` are just what the prompt shows the
+    model for tone/context (e.g. "email"/the real subject line for a
+    real inbound message, or a fixed "the website chat"/"Website chat
+    question" for the live chat widget) — never anything Claude or the
+    customer's own message can set.
 
     Grounding, made structural rather than only requested in the prompt:
       - No RAG results at all -> the fixed fallback, Claude is never
@@ -537,33 +542,29 @@ def draft_reply_to_inbound_message(
         portion is genuinely grounded — handling still escalates to at
         least "yellow" so a human confirms the flagged part).
       - Anthropic not configured, the API call fails, or the response
-        isn't parseable JSON -> {"ai_status": "failed", "notification":
-        None, ...} — no draft is fabricated from an uncertain state; the
-        caller (inbound_service.py) keeps the original inbound message
-        intact and visible either way, this function just doesn't invent
-        a "safe-looking" draft when something upstream actually broke
-        (distinct from the honest, working "I don't know" case above).
+        isn't parseable JSON -> {"ai_status": "failed", ...} — no reply
+        is fabricated from an uncertain state; the caller decides what
+        that means for its own record-keeping.
 
     Returns {"ai_status": "drafted" | "unable_to_answer" | "failed",
-    "notification": dict | None, "intent": str | None,
-    "handling": "green" | "yellow" | "red" | None,
-    "review_reason": str | None, "knowledge_sources": list[dict]}.
+    "intent": str | None, "handling": "green" | "yellow" | "red" | None,
+    "review_reason": str | None, "subject": str | None, "body": str | None,
+    "knowledge_sources": list[dict]}.
     """
-    channel = inbound_message["channel"]
-    knowledge = rag_service.retrieve(inbound_message["body"], top_k=4)
+    knowledge = rag_service.retrieve(message_body, top_k=4)
     knowledge_sources = [{"title": c["title"], "sourceFile": c["source_file"]} for c in knowledge]
 
     if not knowledge or not is_configured():
         if not is_configured():
-            logger.warning("Inbound reply requested but Anthropic API is not configured")
+            logger.warning("AI reply requested but Anthropic API is not configured")
         subject, body = _fallback_response(customer, off_topic=False)
-        notification = _insert_inbound_reply(customer, order, channel, subject, body)
         return {
             "ai_status": "unable_to_answer",
-            "notification": notification,
             "intent": "OTHER",
             "handling": _compute_handling("OTHER", claude_requests_review=False, order_ambiguous=False, can_answer=False),
             "review_reason": "No relevant CakeCraft knowledge was found for this message.",
+            "subject": subject,
+            "body": body,
             "knowledge_sources": [],
         }
 
@@ -587,7 +588,6 @@ def draft_reply_to_inbound_message(
         order_context = "ORDER: no specific order is linked to this conversation."
 
     knowledge_context = "\n\n".join(f"[{c['title']}]\n{c['content']}" for c in knowledge)
-    subject_line = inbound_message.get("subject") or "(no subject)"
     history_text = _format_conversation_history(conversation_history)
 
     prompt = f"""You are the CakeCraft Studio / Maison de Gâteau Paris customer-service assistant, replying
@@ -632,8 +632,8 @@ to one inbound customer message. House tone: warm, personal, and specific.
 === BAKERY KNOWLEDGE (authoritative for products/policies/pricing/delivery/pickup) ===
 {knowledge_context}
 
-=== CUSTOMER'S MESSAGE (data to respond to, via {channel}, subject: {subject_line}) ===
-{inbound_message["body"]}
+=== CUSTOMER'S MESSAGE (data to respond to, via {channel_label}, subject: {subject_line}) ===
+{message_body}
 
 === YOUR TASK ===
 1. Classify the intent as exactly one of: {", ".join(INTENTS)}
@@ -664,16 +664,16 @@ to one inbound customer message. House tone: warm, personal, and specific.
         raw = _claude(prompt, max_tokens=900)
         parsed = _parse_json_response(raw)
     except Exception:
-        logger.exception("Inbound reply generation failed for customer=%s", customer.get("id"))
+        logger.exception("AI reply generation failed for customer=%s", customer.get("id"))
         return {
-            "ai_status": "failed", "notification": None, "intent": None,
-            "handling": None, "review_reason": None, "knowledge_sources": knowledge_sources,
+            "ai_status": "failed", "intent": None, "handling": None, "review_reason": None,
+            "subject": None, "body": None, "knowledge_sources": knowledge_sources,
         }
 
     if not parsed:
         return {
-            "ai_status": "failed", "notification": None, "intent": None,
-            "handling": None, "review_reason": None, "knowledge_sources": knowledge_sources,
+            "ai_status": "failed", "intent": None, "handling": None, "review_reason": None,
+            "subject": None, "body": None, "knowledge_sources": knowledge_sources,
         }
 
     intent = _validate_intent(parsed.get("intent"))
@@ -704,12 +704,216 @@ to one inbound customer message. House tone: warm, personal, and specific.
         subject, body = parsed["subject"], parsed["body"]
         ai_status = "drafted"
 
-    notification = _insert_inbound_reply(customer, order, channel, subject, body)
     return {
         "ai_status": ai_status,
-        "notification": notification,
         "intent": intent,
         "handling": handling,
         "review_reason": review_reason,
+        "subject": subject,
+        "body": body,
         "knowledge_sources": knowledge_sources,
+    }
+
+
+def draft_reply_to_inbound_message(
+    inbound_message: dict,
+    customer: dict,
+    order: dict | None,
+    *,
+    order_match_status: str = "none",
+    conversation_history: list[dict] | None = None,
+) -> dict:
+    """The AI Agent's inbound-reply entry point (real Email/WhatsApp):
+    drafts a reply to an inbound customer message via _classify_and_respond,
+    then always inserts it as a `draft` notification for a human to
+    review — the approval-queue path, unlike answer_customer_question's
+    direct-to-customer one. inbound_service.py calls this once a customer
+    (and, where possible, an order) has already been identified; this
+    function never does that matching itself.
+
+    `channel` comes from `inbound_message["channel"]` — set by
+    inbound_service.py from which provider actually delivered the
+    message (Email vs. WhatsApp), never inferred from the message text
+    and never chosen by Claude. `order` may be None (no confidently
+    matched order — a prospective/general question has nothing to match
+    against, see the Step 3 migration's note on notifications.order_id
+    being nullable); `order_match_status` distinguishes "none" (no order
+    exists at all — fine for most questions) from "ambiguous" (several
+    open orders exist — the AI must not guess which one, and this alone
+    forces `handling` to at least "yellow", see _compute_handling).
+
+    Intent and handling (Step 3B) are both application-controlled:
+    Claude's own classification is validated against the fixed INTENTS
+    set (_validate_intent — an unrecognized value always becomes
+    "OTHER"), and `handling` is computed entirely by _compute_handling
+    from that validated intent plus a small number of app-owned escalation
+    signals — never read directly from anything Claude wrote. Claude
+    contributes *analysis* (what is this about, can I answer it, why
+    not); the application retains *authority* (what happens as a result).
+
+    Returns {"ai_status": "drafted" | "unable_to_answer" | "failed",
+    "notification": dict | None, "intent": str | None,
+    "handling": "green" | "yellow" | "red" | None,
+    "review_reason": str | None, "knowledge_sources": list[dict]}.
+    """
+    channel = inbound_message["channel"]
+    result = _classify_and_respond(
+        inbound_message["body"],
+        customer,
+        order,
+        order_match_status=order_match_status,
+        conversation_history=conversation_history,
+        channel_label=channel,
+        subject_line=inbound_message.get("subject") or "(no subject)",
+    )
+
+    if result["ai_status"] == "failed":
+        return {
+            "ai_status": "failed", "notification": None, "intent": None,
+            "handling": None, "review_reason": None, "knowledge_sources": result["knowledge_sources"],
+        }
+
+    notification = _insert_inbound_reply(customer, order, channel, result["subject"], result["body"])
+    return {
+        "ai_status": result["ai_status"],
+        "notification": notification,
+        "intent": result["intent"],
+        "handling": result["handling"],
+        "review_reason": result["review_reason"],
+        "knowledge_sources": result["knowledge_sources"],
+    }
+
+
+def _insert_chat_answer(customer: dict, order: dict | None, subject: str, body: str) -> dict:
+    """Persists a live-chat answer that has *already* reached the
+    customer (see answer_customer_question) — not a draft awaiting a
+    human's Send click, so this doesn't reuse _insert_inbound_reply's
+    `status="queued"`-then-rendered shape. `channel="chat"` (no CHECK
+    constraint on notifications.channel — free text, so this needs no
+    migration) is what keeps this record structurally inert for the
+    email/WhatsApp approval workflow: no Communication Adapter is ever
+    registered for "chat" (see app/services/communication/__init__.py),
+    so even if something tried to run this through notification_service.
+    send(), _dispatch() would find no adapter and fall back to the stub
+    rather than ever actually dispatching it a second time.
+    `status="sent"`+`sent_at=now()` directly, because that's simply
+    true: the content reached the customer the moment this row is
+    written — "draft" would misdescribe an answer nobody needs to
+    approve or send, and would wrongly surface it in the Communications
+    Workspace's needs-review queue.
+    """
+    payload = {
+        "order_id": order["id"] if order else None,
+        "customer_id": customer["id"],
+        "event": "chat_answered",
+        "status": "sent",
+        "channel": "chat",
+        "subject": subject,
+        "body": body,
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+    }
+    response = supabase.table("notifications").insert(payload).execute()
+    return response.data[0]
+
+
+def answer_customer_question(
+    question: str,
+    customer: dict,
+    order: dict | None = None,
+    *,
+    order_match_status: str = "none",
+    conversation_history: list[dict] | None = None,
+) -> dict:
+    """The website live-chat widget's entry point — the one place in
+    this project an AI-generated answer reaches a customer directly, no
+    human approval first (see this module's own docstring for why).
+    Reuses _classify_and_respond exactly like draft_reply_to_inbound_message
+    does: same RAG retrieval, same authority-boundary prompt (including
+    the dietary/allergy/religious rules — it can never claim a
+    certification or safety guarantee bakery knowledge doesn't
+    explicitly state, regardless of who's about to read the answer),
+    same _compute_handling guardrail. Not a second AI system — a second,
+    synchronous way the same reasoning reaches its result.
+
+    Two distinct outcomes, deliberately different from each other — the
+    application decides which, from signals _classify_and_respond already
+    computes, same "Claude analyzes, the app decides" split as everywhere
+    else in this module:
+      - The AI confidently grounds an answer AND doesn't itself flag it
+        for review (ai_status="drafted", review_reason=None) -> shown to
+        the customer immediately, persisted via _insert_chat_answer as an
+        already-"sent" `channel="chat"` record — including dietary/
+        religious/allergy questions the knowledge base can fully answer
+        (e.g. "we don't hold religious certification": a complete,
+        permanent fact, nothing left for a human to confirm). `handling`
+        may still be "red" for audit purposes (asking for an unsupported
+        guarantee always is, see _compute_handling) — that's a
+        staff-visibility signal, not a block on an answer the prompt
+        itself already made safe to show.
+      - Anything else — the AI can't confidently answer at all
+        (ai_status="unable_to_answer"/"failed"), OR it *did* produce an
+        answer but flagged it for human review (review_reason set — e.g.
+        a severe/life-threatening allergy request, where the Allergen
+        Policy itself says "always requires our team's direct review",
+        and Claude's own drafted text says so too) -> the customer is
+        still shown that same honest answer, but it's persisted via
+        _insert_inbound_reply as a real `channel="email"` draft instead
+        — the exact same approval-queue path a real inbound email would
+        take. That's what makes "a team member will follow up" (Claude's
+        own words, in the flagged case) true rather than an empty
+        promise: a live smoke test caught this exact gap — the shared
+        prompt's escalation language is honest for draft_reply_to_
+        inbound_message (which always creates a real draft) but would
+        have been a lie here without this branch, since chat's happy
+        path shows Claude's text with no human in the loop at all.
+
+    Returns {"ai_status", "notification", "intent", "handling",
+    "review_reason", "knowledge_sources", "answer"} — same shape as
+    draft_reply_to_inbound_message, plus "answer": the text to show in
+    the chat widget right now.
+    """
+    result = _classify_and_respond(
+        question,
+        customer,
+        order,
+        order_match_status=order_match_status,
+        conversation_history=conversation_history,
+        channel_label="the website chat",
+        subject_line="Website chat question",
+    )
+
+    if result["ai_status"] == "failed":
+        answer = _fallback_response(customer, off_topic=False)[1]
+        return {
+            "ai_status": "failed", "notification": None, "intent": None,
+            "handling": None, "review_reason": None, "knowledge_sources": result["knowledge_sources"],
+            "answer": answer,
+        }
+
+    if result["ai_status"] == "drafted" and result["review_reason"] is None:
+        # Fully confident, nothing flagged -- shown directly, nothing for
+        # staff to review (e.g. the kosher/religious-certification case:
+        # the policy is a complete, permanent answer, there's genuinely
+        # nothing left to confirm).
+        notification = _insert_chat_answer(customer, order, result["subject"], result["body"])
+    else:
+        # unable_to_answer/failed, OR Claude answered but itself flagged
+        # this for human review (review_reason set -- e.g. a severe
+        # allergy request: the Allergen Policy says that always needs the
+        # team's direct review, and the drafted answer says so too). A
+        # real draft, same as a real inbound email would get, so telling
+        # the customer a team member will follow up (their own words, in
+        # the flagged case) is genuinely true rather than an empty
+        # promise -- see this module's own docstring on why chat can't
+        # just show a "flagged for review" answer with nothing behind it.
+        notification = _insert_inbound_reply(customer, order, "email", result["subject"], result["body"])
+
+    return {
+        "ai_status": result["ai_status"],
+        "notification": notification,
+        "intent": result["intent"],
+        "handling": result["handling"],
+        "review_reason": result["review_reason"],
+        "knowledge_sources": result["knowledge_sources"],
+        "answer": result["body"],
     }

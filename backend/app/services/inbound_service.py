@@ -1,14 +1,15 @@
 """Inbound Communication orchestration — Step 3 (+ the order form's Notes
-field, wired in later — see process_order_note).
+field, wired in later — see process_order_note; + the website live-chat
+widget, wired in later still — see process_chat_message).
 
 Connects the inbound sources (communication.gmail_inbound,
-communication.whatsapp_inbound, and the order form's own Notes field) to
-the existing AI Agent (agent_service.draft_reply_to_inbound_message) and
-the existing Notification Engine (that function inserts into
-`notifications` exactly the way agent_service.draft_customer_communication
-already does for staff-initiated drafts) — this module is glue, not a
-second pipeline: it never talks to Claude, RAG, or a Communication
-Adapter directly.
+communication.whatsapp_inbound, the order form's own Notes field, and the
+website chat widget) to the existing AI Agent (agent_service.
+draft_reply_to_inbound_message / answer_customer_question) and the
+existing Notification Engine (those functions insert into `notifications`
+exactly the way agent_service.draft_customer_communication already does
+for staff-initiated drafts) — this module is glue, not a second pipeline:
+it never talks to Claude, RAG, or a Communication Adapter directly.
 
 Every inbound message is durably recorded in `inbound_messages` *before*
 any customer/order matching or AI processing is attempted, and every
@@ -25,6 +26,7 @@ inserting a duplicate, so a webhook retry or a re-run IMAP poll is safe.
 
 import logging
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from app.core.database import supabase
 from app.services import agent_service, customer_service, order_service
@@ -262,6 +264,77 @@ def process_order_note(order: dict, customer: dict) -> dict | None:
         return inbound
 
     return _draft_reply_and_update(inbound, customer, order, "matched")
+
+
+def process_chat_message(question: str, customer: dict, order: dict | None, order_match_status: str) -> dict:
+    """The website live-chat widget's entry point (api/routes/chat.py) —
+    records the question in `inbound_messages` exactly like every other
+    inbound source (same table, same audit trail for staff), but hands
+    off to agent_service.answer_customer_question instead of
+    draft_reply_to_inbound_message, and — unlike every other function in
+    this module — returns the answer *text* synchronously, because the
+    caller needs to show it to the customer right now, not just persist
+    a row (see that function's own docstring for why this is the one
+    exception to "AI never reaches a customer without human approval").
+
+    `channel="email"` for the inbound_messages row — not a new channel
+    value, same reasoning as process_order_note: the constraint only
+    allows ('email', 'whatsapp'), and the customer's email (required to
+    have an identity here at all — see order_service.find_or_create_
+    customer) is exactly what a human-reviewed reply would go out
+    through if this question needed escalation instead of a direct
+    answer. `provider_message_id` is a fresh uuid per message, not a
+    deterministic key like process_order_note's: one chat visitor can
+    legitimately ask many separate questions, each its own row, not "the
+    one note on this one order."
+
+    Never raises: any unexpected failure still leaves the original
+    inbound message intact (already committed before this is called)
+    with ai_status left "failed", and still returns a safe, honest
+    answer for the widget rather than letting the request fail.
+    """
+    inbound, _is_new = _record_inbound_message(
+        channel="email",
+        provider_message_id=f"chat:{uuid4()}",
+        sender_identifier=customer["email"],
+        subject="Website chat question",
+        body=question,
+        received_at=datetime.now(timezone.utc),
+    )
+
+    try:
+        history = get_recent_conversation(customer["id"], before_created_at=inbound["created_at"])
+
+        result = agent_service.answer_customer_question(
+            question, customer, order, order_match_status=order_match_status, conversation_history=history
+        )
+
+        _update_inbound_message(
+            inbound["id"],
+            {
+                "customer_id": customer["id"],
+                "order_id": order["id"] if order else None,
+                "order_match_status": order_match_status,
+                "ai_status": result["ai_status"],
+                "draft_notification_id": result["notification"]["id"] if result["notification"] else None,
+                "intent": result.get("intent"),
+                "handling": result.get("handling"),
+                "review_reason": result.get("review_reason"),
+                "knowledge_sources": result.get("knowledge_sources"),
+            },
+        )
+        return {"answer": result["answer"], "intent": result.get("intent"), "handling": result.get("handling")}
+    except Exception:
+        logger.exception("Failed to process chat message for customer=%s", customer.get("id"))
+        try:
+            _update_inbound_message(inbound["id"], {"ai_status": "failed"})
+        except Exception:
+            logger.exception("Failed to even mark chat inbound message %s as failed", inbound.get("id"))
+        return {
+            "answer": "Sorry, I'm having trouble answering right now — please try again in a moment.",
+            "intent": None,
+            "handling": None,
+        }
 
 
 def process_inbound_email(parsed: dict) -> dict:

@@ -1313,6 +1313,228 @@ def test_ambiguous_order_context_escalates_handling_and_is_named_in_prompt():
     assert "NOT confirmed which one they mean" in sent_prompt
 
 
+# --- answer_customer_question (website live chat widget) -------------------
+# Same guardrails as draft_reply_to_inbound_message (they share
+# _classify_and_respond) -- these tests focus on what's different: the
+# answer is shown to the customer directly (channel="chat", status="sent")
+# instead of queued as a draft, except when the AI can't confidently
+# answer, which still creates a real channel="email" draft so escalation
+# is genuine, not a hollow promise.
+
+
+def test_answer_customer_question_normal_question_is_shown_directly():
+    fake_chunks = [{"title": "Recipe Guide", "content": "Our Red Velvet is paired with Cream Cheese frosting.", "source_file": "recipe_guide.md"}]
+    fake_response = _fake_claude_json_response(
+        intent="PRODUCT_QUESTION", subject="Re: frosting", body="Our Red Velvet is paired with Cream Cheese frosting.",
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        result = agent_service.answer_customer_question("What frosting comes with Red Velvet?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["ai_status"] == "drafted"
+    assert result["answer"] == "Our Red Velvet is paired with Cream Cheese frosting."
+    inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert inserted_payload["channel"] == "chat"
+    assert inserted_payload["status"] == "sent"  # shown immediately, not queued for approval
+    assert inserted_payload["sent_at"] is not None
+
+
+def test_answer_customer_question_gluten_free_question_answered_when_verified():
+    fake_chunks = [{"title": "Recipe Guide", "content": "Our Storybook Baby Cloud template uses a certified gluten-free flour blend.", "source_file": "recipe_guide.md"}]
+    fake_response = _fake_claude_json_response(
+        intent="ALLERGY_DIETARY", subject="Re: gluten-free", body="Our Storybook Baby Cloud cake is made with a certified gluten-free flour blend.",
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        result = agent_service.answer_customer_question("Is the Storybook Baby Cloud cake gluten-free?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["ai_status"] == "drafted"
+    assert "gluten-free" in result["answer"].lower()
+
+
+def test_answer_customer_question_allergy_question_without_verified_data_escalates_not_guesses():
+    fake_chunks = [{"title": "Recipe Guide", "content": "Our Chocolate sponge uses Belgian dark cocoa.", "source_file": "recipe_guide.md"}]
+    fake_response = _fake_claude_json_response(intent="ALLERGY_DIETARY", canAnswerFromKnowledge=False, subject=None, body=None)
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="email", status="draft")
+
+        result = agent_service.answer_customer_question("Is this cake safe for a nut allergy?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["ai_status"] == "unable_to_answer"
+    assert "nut" not in result["answer"].lower()  # never invents a safety guarantee
+    # Escalated as a REAL draft (channel="email"), not shown as a
+    # false-confidence "answer" -- so "a team member will follow up" is
+    # actually true, satisfying the "no empty flagged-for-review promise"
+    # requirement.
+    inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert inserted_payload["channel"] == "email"
+    assert inserted_payload["status"] == "draft"
+
+
+def test_answer_customer_question_kosher_question_answers_directly_without_certifying():
+    fake_chunks = [{"title": "Dietary, Allergy & Religious Requirements Policy", "content": "CakeCraft does not hold Kosher certification.", "source_file": "dietary_allergy_religious_policy.md"}]
+    direct_body = (
+        "We want to be completely transparent: our cakes are not religiously certified, including kosher "
+        "certification. We take great care selecting quality ingredients and preparing every cake attentively."
+    )
+    fake_response = _fake_claude_json_response(
+        intent="RELIGIOUS_DIETARY", requestsUnsupportedGuarantee=True, subject="Re: kosher", body=direct_body,
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        result = agent_service.answer_customer_question("Is it a kosher cake?", _FAKE_INBOUND_CUSTOMER, None)
+
+    # Shown directly despite handling="red" -- the guardrail is enforced
+    # in the prompt that produced the text, not by withholding a safe answer.
+    assert result["ai_status"] == "drafted"
+    assert result["handling"] == "red"
+    assert "not religiously certified" in result["answer"].lower()
+    assert "yes, it is kosher" not in result["answer"].lower()  # no invented confirmation
+    inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert inserted_payload["channel"] == "chat"  # never dispatchable as a real email/WhatsApp send
+    assert inserted_payload["status"] == "sent"
+
+
+def test_answer_customer_question_halal_question_answers_directly_without_certifying():
+    fake_chunks = [{"title": "Dietary, Allergy & Religious Requirements Policy", "content": "CakeCraft does not hold Halal certification.", "source_file": "dietary_allergy_religious_policy.md"}]
+    fake_response = _fake_claude_json_response(
+        intent="RELIGIOUS_DIETARY", requestsUnsupportedGuarantee=True, subject="Re: halal",
+        body="Our cakes are not religiously certified, including halal certification, but we're happy to share what we know about ingredients.",
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        result = agent_service.answer_customer_question("Is this cake halal?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["handling"] == "red"
+    assert "not religiously certified" in result["answer"].lower()
+
+
+def test_answer_customer_question_flagged_for_review_still_shown_but_creates_a_real_draft():
+    # Found live: a severe-allergy question can have canAnswerFromKnowledge
+    # =true (Claude drafts an honest, non-guaranteeing answer) AND
+    # requiresHumanReview=true (the Allergen Policy says severe allergies
+    # always need the team's direct review) at the same time. Showing
+    # that answer via the instant "chat"/"sent" path with no draft behind
+    # it would make its own "a team member will follow up" a lie -- this
+    # must route through the real draft path instead, same as
+    # unable_to_answer, while still showing the customer the same honest
+    # text right away.
+    fake_chunks = [{"title": "Dietary, Allergy & Religious Requirements Policy", "content": "Severe allergy requests always require our team's direct review.", "source_file": "dietary_allergy_religious_policy.md"}]
+    honest_body = "We can't guarantee this cake is safe for a severe nut allergy. A team member will follow up with you personally before anything is confirmed."
+    fake_response = _fake_claude_json_response(
+        intent="ALLERGY_DIETARY", requestsUnsupportedGuarantee=True, requiresHumanReview=True,
+        reviewReason="Severe allergy request requires the team's direct review.",
+        subject="Re: allergy", body=honest_body,
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="email", status="draft")
+
+        result = agent_service.answer_customer_question("I have a severe nut allergy, is this safe?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["ai_status"] == "drafted"
+    assert result["answer"] == honest_body  # customer still gets the honest answer immediately
+    inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert inserted_payload["channel"] == "email"  # a REAL draft, not the instant chat/sent path
+    assert inserted_payload["status"] == "draft"
+    assert inserted_payload["event"] == "agent_drafted"
+
+
+def test_answer_customer_question_with_no_order_context():
+    fake_chunks = [{"title": "Recipe Guide", "content": "Our Vanilla sponge uses Madagascar bourbon vanilla.", "source_file": "recipe_guide.md"}]
+    fake_response = _fake_claude_json_response(subject="Re: vanilla", body="Our Vanilla sponge uses Madagascar bourbon vanilla.")
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        agent_service.answer_customer_question("What's in the vanilla sponge?", _FAKE_INBOUND_CUSTOMER, None, order_match_status="none")
+
+    sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "no specific order is linked" in sent_prompt
+
+
+def test_answer_customer_question_with_order_context_grounds_on_the_real_order():
+    fake_chunks = [{"title": "Recipe Guide", "content": "Wedding cakes are finished 48 hours before pickup.", "source_file": "recipe_guide.md"}]
+    fake_response = _fake_claude_json_response(subject="Re: order", body="Your Rose Gold Tier Cake is in progress.")
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        result = agent_service.answer_customer_question(
+            "How's my cake coming along?", _FAKE_INBOUND_CUSTOMER, _FAKE_INBOUND_ORDER, order_match_status="matched"
+        )
+
+    sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "Rose Gold Tier Cake" in sent_prompt
+    assert "in_progress" in sent_prompt
+    inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert inserted_payload["order_id"] == "order-9"
+    assert result["ai_status"] == "drafted"
+
+
+def test_answer_customer_question_never_raises_when_anthropic_is_down():
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=[{"title": "x", "content": "y", "source_file": "z.md"}]),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+    ):
+        mock_anthropic_cls.return_value.messages.create.side_effect = RuntimeError("Anthropic is down")
+        result = agent_service.answer_customer_question("Do you have vegan options?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["ai_status"] == "failed"
+    assert result["notification"] is None
+    assert result["answer"]  # always some safe text for the widget to show
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:
