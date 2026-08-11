@@ -26,6 +26,8 @@ distinct from get_customer_communications, which specifically means "a
 message actually delivered through a real channel," still none today.
 """
 
+import re
+
 from app.core.database import supabase
 from app.services import audit_service, notification_service, order_service
 from app.services.search_utils import sanitize_search_term
@@ -112,6 +114,50 @@ def get_customer_by_id(customer_id: str) -> dict | None:
         supabase.table("customers").select("*").eq("id", customer_id).maybe_single().execute()
     )
     return response.data if response is not None else None
+
+
+def find_customer_by_email(email: str) -> tuple[dict | None, bool]:
+    """Read-only customer identification for an inbound Email message
+    (Step 3 — see inbound_service.py). Unlike order_service.
+    _find_or_create_customer, this never creates a row: an inbound
+    message from an address we don't recognize means "unknown customer",
+    not "invent one" — the inbound message stays visible to staff either
+    way (see the migration's own note on customer_id being nullable).
+
+    Returns (customer, is_ambiguous). This project's schema has no unique
+    constraint on customers.email, so more than one row sharing the same
+    address is a real, if rare, possibility — is_ambiguous=True with
+    customer=None means "don't guess which one", the same caution
+    find_open_order_for_customer applies to multiple open orders.
+    """
+    response = supabase.table("customers").select("*").eq("email", email).execute()
+    if len(response.data) == 1:
+        return response.data[0], False
+    return None, len(response.data) > 1
+
+
+def find_customer_by_phone(phone: str) -> tuple[dict | None, bool]:
+    """Same contract as find_customer_by_email, keyed on phone — matched
+    on the digits-only normalized form (mirrors communication.
+    whatsapp_adapter._to_whatsapp_number's own normalization) since
+    customers.phone is free-text and not guaranteed consistently
+    formatted at write time.
+
+    Fetches every customer and filters in Python rather than a SQL
+    predicate: normalizing phone formatting at the database layer would
+    need a generated column or extension this schema doesn't have, and at
+    this project's scale (~100 demo customers) a full-table read is a
+    reasonable, simple tradeoff — flagged here as a known ceiling, not an
+    oversight, for whenever real customer volume would call for it.
+    """
+    normalized = re.sub(r"\D", "", phone)
+    if not normalized:
+        return None, False
+    response = supabase.table("customers").select("*").execute()
+    matches = [c for c in response.data if c.get("phone") and re.sub(r"\D", "", c["phone"]) == normalized]
+    if len(matches) == 1:
+        return matches[0], False
+    return None, len(matches) > 1
 
 
 def get_customer_detail(customer_id: str) -> dict | None:

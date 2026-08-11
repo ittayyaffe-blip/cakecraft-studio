@@ -1,7 +1,7 @@
 # Bakery Operations Manual — Maison de Gâteau Paris
 
 ## Hours of Operation
-The bakery kitchen operates Tuesday through Sunday, 6:00 AM to 7:00 PM. The retail counter and pickup window are open 9:00 AM to 6:00 PM on the same days. The bakery is closed Mondays for deep cleaning, equipment maintenance, and staff rest.
+Our opening hours: the bakery kitchen operates Tuesday through Sunday, 6:00 AM to 7:00 PM. The retail counter and pickup window are open 9:00 AM to 6:00 PM on the same days — that is when customers can visit or collect an order. The bakery is closed all day Monday for deep cleaning, equipment maintenance, and staff rest.
 
 ## Daily Rhythm
 Mornings (6:00–11:00 AM) are reserved for sponge and base-layer baking — every cake scheduled for same-day or next-day pickup gets its cake layers baked first thing, while the ovens are freshest and staff attention is highest. Midday (11:00 AM–3:00 PM) is filling, stacking, and crumb-coating. Afternoons (3:00–7:00 PM) are final decoration, detail work, and next-day prep (soaking, syrup-making, sugar flower work that needs overnight drying time).

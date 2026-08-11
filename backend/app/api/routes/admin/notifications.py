@@ -23,19 +23,33 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.security import get_current_admin, require_role
+from app.schemas.admin_communications import AdminInboundMessage
 from app.schemas.admin_notification import (
     AdminNotification,
     AdminNotificationListResponse,
     NotificationContentUpdateRequest,
 )
-from app.services import notification_service
+from app.services import communication, inbound_service, notification_service
 from app.services.audit_service import record_event
 from app.services.auth_service import AdminIdentity
-from app.services.notification_service import NOTIFICATION_STATUSES
+from app.services.notification_service import NEEDS_REVIEW_STATUSES, NOTIFICATION_STATUSES, VALID_SOURCES
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/notifications", tags=["admin-notifications"])
+
+# Communications Workspace (Step 2) primary views — a coarse, human-facing
+# grouping over the underlying `status` values, resolved to the `statuses`
+# param list_notifications() actually filters on. `None` means "no status
+# filter" (All). Kept here, not in notification_service.py, since "view" is
+# this route's own API-facing vocabulary, not core domain vocabulary other
+# callers need — NEEDS_REVIEW_STATUSES itself (the real domain knowledge)
+# still lives in notification_service.py.
+VIEW_STATUSES: dict[str, tuple[str, ...] | None] = {
+    "needs_review": NEEDS_REVIEW_STATUSES,
+    "sent": ("sent",),
+    "all": None,
+}
 
 
 def _require_existing_notification(notification_id: str) -> dict:
@@ -82,15 +96,36 @@ def _apply_transition(notification: dict, admin: AdminIdentity, transition_fn, a
 @router.get("", response_model=AdminNotificationListResponse)
 def list_notifications(
     status: str | None = None,
+    view: str | None = None,
+    channel: str | None = None,
+    source: str | None = None,
     page: int = Query(default=1, ge=1),
     pageSize: int = Query(default=20, ge=1, le=100),
     admin: AdminIdentity = Depends(get_current_admin),
 ):
+    # `status` (exact match, e.g. "queued") is the original Sprint 1
+    # filter — still valid, unused by the Communications Workspace UI now
+    # but not removed, matching this route's own established idiom
+    # (orders.py's list_orders validates its own filter value the same
+    # way). `view` is the new coarse grouping the UI actually drives.
     if status is not None and status not in NOTIFICATION_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+    if view is not None and view not in VIEW_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid view: {view}")
+    if channel is not None and communication.get_adapter(channel) is None:
+        raise HTTPException(status_code=400, detail=f"Invalid channel: {channel}")
+    if source is not None and source not in VALID_SOURCES:
+        raise HTTPException(status_code=400, detail=f"Invalid source: {source}")
 
     try:
-        return notification_service.list_notifications(status=status, page=page, page_size=pageSize)
+        return notification_service.list_notifications(
+            status=status,
+            statuses=VIEW_STATUSES.get(view) if view else None,
+            channel=channel,
+            source=source,
+            page=page,
+            page_size=pageSize,
+        )
     except Exception:
         logger.exception("Failed to list notifications")
         raise HTTPException(status_code=500, detail="Failed to list notifications")
@@ -99,6 +134,24 @@ def list_notifications(
 @router.get("/{notification_id}", response_model=AdminNotification)
 def get_notification(notification_id: uuid.UUID, admin: AdminIdentity = Depends(get_current_admin)):
     return _require_existing_notification(str(notification_id))
+
+
+@router.get("/{notification_id}/source-message", response_model=AdminInboundMessage | None)
+def get_source_message(notification_id: uuid.UUID, admin: AdminIdentity = Depends(get_current_admin)):
+    """The inbound customer message this draft was created from, if any
+    (Step 3) — null for every notification created by the *other* paths
+    (an order-status change, or a staff-initiated on-demand draft), not
+    an error. The Communications drawer calls this alongside the regular
+    GET above to decide whether to render the "Customer message" section.
+    Doesn't require the notification to exist first: no source message
+    for an unknown id is exactly as valid a "null" as no source message
+    for a real one.
+    """
+    try:
+        return inbound_service.get_source_message_for_notification(str(notification_id))
+    except Exception:
+        logger.exception("Failed to fetch source message for notification %s", notification_id)
+        raise HTTPException(status_code=500, detail="Failed to fetch the source message")
 
 
 @router.patch("/{notification_id}", response_model=AdminNotification)

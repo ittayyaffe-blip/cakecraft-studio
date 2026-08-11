@@ -14,6 +14,9 @@ The success paths (a real DB write) are exercised live via
 docs/SPRINT1_EVENT_DRIVEN_COMMUNICATION.md.
 """
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
 from app.services import notification_service, notification_templates
 
 ORDER = {
@@ -40,7 +43,16 @@ def test_get_template_for_status_known_status():
 
 
 def test_get_template_for_status_unmapped_status_returns_none():
-    assert notification_templates.get_template_for_status("pending") is None
+    assert notification_templates.get_template_for_status("not_a_real_status") is None
+
+
+def test_get_template_for_status_pending_has_an_order_received_template():
+    # Step 5: "order received" now gets the same draft -> approve -> send
+    # treatment as every later transition -- this was the one status with
+    # no template at all before.
+    template = notification_templates.get_template_for_status("pending")
+    assert template is not None
+    assert template["event"] == "order_received"
 
 
 def test_render_fills_customer_and_template_name():
@@ -56,6 +68,32 @@ def test_render_falls_back_when_customer_or_template_missing():
     rendered = notification_templates.render(template, {})
     assert "there" in rendered["body"]
     assert "your cake" in rendered["body"]
+
+
+def test_render_includes_pickup_date_when_the_order_actually_has_one():
+    # Real fact in, real fact out -- never invented. Most real orders never
+    # get a pickup_date set today (see render()'s own docstring), so this
+    # is the "it happens to be there" path, not the default.
+    template = notification_templates.get_template_for_status("confirmed")
+    order_with_pickup = {**ORDER, "pickup_date": "2026-09-01"}
+    rendered = notification_templates.render(template, order_with_pickup)
+    assert "2026-09-01" in rendered["body"]
+
+
+def test_render_omits_pickup_line_when_the_order_has_no_pickup_date():
+    template = notification_templates.get_template_for_status("confirmed")
+    rendered = notification_templates.render(template, ORDER)  # ORDER has no pickup_date
+    assert "pickup date" not in rendered["body"].lower()
+
+
+def test_render_ready_template_never_states_a_pickup_date():
+    # Deliberate: "ready" stays date-free even if pickup_date is set --
+    # see render()'s own docstring on why restating it here could read as
+    # a future promise rather than a completed fact.
+    template = notification_templates.get_template_for_status("ready")
+    order_with_pickup = {**ORDER, "pickup_date": "2026-09-01"}
+    rendered = notification_templates.render(template, order_with_pickup)
+    assert "2026-09-01" not in rendered["body"]
 
 
 def test_event_labels_cover_every_template():
@@ -95,6 +133,162 @@ def test_update_draft_content_rejects_non_draft():
             {"status": "approved", "id": "x", "subject": "old", "body": "old"}, "new", "new"
         )
     )
+
+
+# --- Communications Workspace (Step 2): channel default + list filters ----
+
+
+def _mock_no_existing_event_notification(mock_supabase) -> None:
+    """Configures the idempotency-check chain
+    (select().eq().eq().limit().execute()) to report "nothing found yet" --
+    the setup every test exercising the create-a-new-notification path
+    needs, now that create_notification_for_order_event() checks first.
+    """
+    mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value = SimpleNamespace(
+        data=[]
+    )
+
+
+def test_create_notification_for_order_event_defaults_channel_to_email():
+    # The automated, order-status-triggered path must know its intended
+    # channel from creation, same as the AI Agent's draft path already
+    # does -- not only once _dispatch() resolves one at send time.
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        _mock_no_existing_event_notification(mock_supabase)
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": "notif-1", "status": "queued", "channel": "email"}]
+        )
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = (
+            SimpleNamespace(
+                data=[{"id": "notif-1", "status": "draft", "channel": "email", "subject": "x", "body": "y"}]
+            )
+        )
+
+        notification_service.create_notification_for_order_event(ORDER, "confirmed")
+
+        inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+        assert inserted_payload["channel"] == "email"
+
+
+def test_create_notification_for_order_event_is_idempotent():
+    # Step 5's critical requirement: re-processing the same (order, event)
+    # -- a re-saved status, a retried request -- must not create a second
+    # notification. The existence check finds the one from "before".
+    already_existing = {"id": "notif-existing", "status": "draft", "event": "order_confirmed"}
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value = SimpleNamespace(
+            data=[already_existing]
+        )
+
+        result = notification_service.create_notification_for_order_event(ORDER, "confirmed")
+
+        assert result == already_existing
+        mock_supabase.table.return_value.insert.assert_not_called()
+
+
+def test_create_notification_for_order_event_pending_status_creates_order_received():
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        _mock_no_existing_event_notification(mock_supabase)
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": "notif-2", "status": "queued", "channel": "email"}]
+        )
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": "notif-2", "status": "draft", "channel": "email", "subject": "x", "body": "y"}]
+        )
+
+        result = notification_service.create_notification_for_order_event(ORDER, "pending")
+
+        assert result is not None
+        inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+        assert inserted_payload["event"] == "order_received"
+        assert inserted_payload["order_id"] == ORDER["id"]
+
+
+def test_create_notification_for_order_event_never_raises_even_if_the_existence_check_fails():
+    # The "never raises" contract must hold for the new idempotency check
+    # too, not just for the insert/render steps it already covered.
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value.select.side_effect = RuntimeError("Supabase is down")
+        result = notification_service.create_notification_for_order_event(ORDER, "confirmed")
+    assert result is None
+
+
+def test_create_notification_for_order_event_cancelled_still_lands_at_draft_not_sent():
+    # Sensitive case: cancellation must not bypass human review -- the
+    # notification lands at the exact same "draft" status every other
+    # event does, with no special-cased auto-send/auto-approve path.
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        _mock_no_existing_event_notification(mock_supabase)
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": "notif-3", "status": "queued", "channel": "email"}]
+        )
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": "notif-3", "status": "draft", "channel": "email", "subject": "x", "body": "y"}]
+        )
+
+        result = notification_service.create_notification_for_order_event(ORDER, "cancelled")
+
+        assert result["status"] == "draft"
+        update_payload = mock_supabase.table.return_value.update.call_args.args[0]
+        assert update_payload["status"] == "draft"  # never anything past draft from this path
+
+
+def _self_chaining_query_mock(execute_result):
+    """A Supabase query-builder mock where every chainable method
+    (select/eq/in_/neq/order/range) returns the SAME mock object, so a
+    test can assert e.g. `query.eq.assert_any_call(...)` regardless of
+    how deep in the real chain that call happens -- not coupled to
+    list_notifications()'s exact filter-application order.
+    """
+    query = MagicMock()
+    for method in ("select", "eq", "in_", "neq", "order", "range"):
+        getattr(query, method).return_value = query
+    query.execute.return_value = execute_result
+    return query
+
+
+def test_list_notifications_filters_by_channel():
+    query = _self_chaining_query_mock(SimpleNamespace(data=[], count=0))
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value = query
+        notification_service.list_notifications(channel="whatsapp")
+    query.eq.assert_any_call("channel", "whatsapp")
+
+
+def test_list_notifications_source_ai_drafted_filters_by_agent_drafted_event():
+    query = _self_chaining_query_mock(SimpleNamespace(data=[], count=0))
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value = query
+        notification_service.list_notifications(source="ai_drafted")
+    query.eq.assert_any_call("event", "agent_drafted")
+
+
+def test_list_notifications_source_automated_excludes_agent_drafted_event():
+    query = _self_chaining_query_mock(SimpleNamespace(data=[], count=0))
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value = query
+        notification_service.list_notifications(source="automated")
+    query.neq.assert_any_call("event", "agent_drafted")
+
+
+def test_list_notifications_statuses_param_uses_in_query_for_needs_review_view():
+    query = _self_chaining_query_mock(SimpleNamespace(data=[], count=0))
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value = query
+        notification_service.list_notifications(statuses=notification_service.NEEDS_REVIEW_STATUSES)
+    query.in_.assert_any_call("status", list(notification_service.NEEDS_REVIEW_STATUSES))
+
+
+def test_list_notifications_statuses_takes_priority_over_single_status():
+    # If a caller somehow passed both (no real caller does), the coarse
+    # `view` grouping wins -- documented behavior, not just an accident of
+    # if/elif order.
+    query = _self_chaining_query_mock(SimpleNamespace(data=[], count=0))
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value = query
+        notification_service.list_notifications(status="queued", statuses=("sent",))
+    query.in_.assert_any_call("status", ["sent"])
+    query.eq.assert_not_called()
 
 
 def run_all() -> None:

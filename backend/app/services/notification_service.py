@@ -40,7 +40,37 @@ NOTIFICATION_STATUSES = (
     "failed",  # reserved — no code path sets this yet
 )
 
-_NOTIFICATION_SELECT = "*, customers(id, name, email, phone)"
+# Communications Workspace (Step 2) — the coarse "what needs my attention"
+# grouping the admin route's `view` param maps to. `failed` belongs here,
+# not with "sent": a failed send needs a human to fix and resubmit it, the
+# same kind of action item as an unsubmitted draft, not a delivered outcome.
+NEEDS_REVIEW_STATUSES = ("draft", "awaiting_approval", "failed")
+
+# Where a notification's content originated — derived from the existing
+# `event` field, not a new column: "agent_drafted" is the one event key
+# the AI Agent's on-demand draft path uses (see agent_service.py); every
+# other event key comes from an order-status transition's deterministic
+# template (notification_templates.py), i.e. "automated".
+VALID_SOURCES = ("automated", "ai_drafted")
+
+# Step 3B: also embeds the linked order's cake/status/pickup-date (via a
+# nested PostgREST embed, orders -> cake_templates) so the Communications
+# drawer can show "Order context" (see admin_notification.py's
+# AdminNotificationOrder) — a read-time join, not a new column/migration.
+# order_id is nullable (an AI-drafted reply to a general question may
+# have none — see the Step 3 migration), so this embeds as null too.
+#
+# `inbound_messages(...)` is a *reverse* embed (inbound_messages.
+# draft_notification_id references notifications.id) — PostgREST returns
+# it as a list even though at most one inbound message ever links to a
+# given draft by construction; the Communications list/drawer take the
+# first (only) entry when present. Empty for every notification created
+# by the other two paths (an order-status change, or a staff-initiated
+# on-demand draft) — most notifications, not an error.
+_NOTIFICATION_SELECT = (
+    "*, customers(id, name, email, phone), orders(id, status, pickup_date, cake_templates(name, category)), "
+    "inbound_messages(intent, handling, review_reason, knowledge_sources)"
+)
 
 
 def _page_to_range(page: int, page_size: int) -> tuple[int, int]:
@@ -67,6 +97,14 @@ def _insert_queued(order: dict, event_key: str, *, created_at: str | None = None
         "customer_id": order["customer_id"],
         "event": event_key,
         "status": "queued",
+        # Default to "email" from creation, same as agent_service.
+        # draft_customer_communication already does for AI drafts — a
+        # notification's intended channel should be knowable the moment
+        # it exists, not only once it's actually sent (_dispatch() would
+        # otherwise resolve a null channel to DEFAULT_CHANNEL at send
+        # time regardless, so this makes the visible value match the
+        # real one, it doesn't change dispatch behavior).
+        "channel": "email",
     }
     if created_at is not None:
         payload["created_at"] = created_at
@@ -85,38 +123,74 @@ def _render_draft(notification: dict, template: dict, order: dict) -> dict:
     return response.data[0]
 
 
+def _find_existing_event_notification(order_id: str, event_key: str) -> dict | None:
+    """Idempotency check: has a notification for this exact (order, event)
+    pair already been created? Same pattern inbound_service._find_existing
+    already uses for inbound-message dedup — a plain query-before-insert,
+    no schema change, since `order_id`/`event` are already real columns.
+    """
+    response = (
+        supabase.table("notifications")
+        .select(_NOTIFICATION_SELECT)
+        .eq("order_id", order_id)
+        .eq("event", event_key)
+        .limit(1)
+        .execute()
+    )
+    return response.data[0] if response.data else None
+
+
 def create_notification_for_order_event(
     order: dict, order_status: str, *, created_at: str | None = None
 ) -> dict | None:
     """Create (and immediately render) a notification for one order-status
-    transition, or return None if there's no template for this status —
-    not every transition is customer-relevant (see
+    transition, or return the existing one / None — see below — if there's
+    nothing new to create. Not every transition is customer-relevant (see
     notification_templates.py).
 
-    Called from app/api/routes/admin/orders.py's status-update route,
-    right after the order status itself is updated and audited — the same
-    route that already orchestrates order_service + audit_service
-    together gains one more downstream step.
+    Called from app/api/routes/admin/orders.py's status-update route right
+    after the order status itself is updated and audited, and from
+    app/api/routes/orders.py's order-creation route for the initial
+    `pending` -> "order received" event — the same function, two call
+    sites, no separate creation path for "the first event" vs. "every
+    later one."
+
+    Idempotent per (order_id, event): re-processing the same transition —
+    a staff member re-saving the same status, a retried request, a
+    duplicate webhook-style call — returns the *existing* notification
+    instead of inserting a second one. This is an application-level check
+    (not a DB constraint) matching this function's existing "fail safe,
+    never block the caller" contract; a concurrent-request race remains
+    theoretically possible, same class of gap this project accepts
+    elsewhere at this scale (see customer_service.find_customer_by_email's
+    own docstring on a comparable tradeoff).
 
     `created_at` is a keyword-only override used exclusively by
     tools/demo_data_seed.py to backdate a seeded notification to when that
     status transition "happened" historically (see
-    docs/SPRINT2_DEMO_DATA.md). The real call site never passes it, so
+    docs/SPRINT2_DEMO_DATA.md). The real call sites never pass it, so
     notifications keep their normal DB-generated `now()` value exactly as
     before this parameter existed.
 
     Never raises: a failure here must not block the order-status update
-    it's reacting to — the same fail-open philosophy
-    audit_service.record_event already established. Both "no template for
-    this status" and "creation failed unexpectedly" return None; callers
-    don't need to tell them apart, both mean "no notification exists for
-    this transition."
+    (or order creation) it's reacting to — the same fail-open philosophy
+    audit_service.record_event already established. "No template for this
+    status," "already created," and "creation failed unexpectedly" all
+    return without raising; callers don't need to tell them apart.
     """
     template = notification_templates.get_template_for_status(order_status)
     if template is None:
         return None
 
     try:
+        existing = _find_existing_event_notification(order["id"], template["event"])
+        if existing is not None:
+            logger.info(
+                "Notification for order=%s event=%s already exists (id=%s) — skipping duplicate",
+                order["id"], template["event"], existing["id"],
+            )
+            return existing
+
         queued = _insert_queued(order, template["event"], created_at=created_at)
         return _render_draft(queued, template, order)
     except Exception:
@@ -127,13 +201,39 @@ def create_notification_for_order_event(
 
 
 def list_notifications(
-    status: str | None = None, page: int = 1, page_size: int = 20
+    status: str | None = None,
+    statuses: tuple[str, ...] | None = None,
+    channel: str | None = None,
+    source: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
 ) -> dict:
-    """Search/paginate the notification queue for the admin screen."""
+    """Search/paginate the notification queue for the admin screen —
+    the Communications Workspace (Step 2) filters on top of it.
+
+    `status` (single exact match) is the original Sprint 1 filter,
+    unchanged and still available. `statuses` (Communications Workspace's
+    `view` param — see admin/notifications.py) is a coarse OR-of-statuses
+    grouping, e.g. NEEDS_REVIEW_STATUSES; it takes priority over `status`
+    if both are somehow given, since one route only ever passes one or
+    the other. `channel`/`source` are new, independent filters — `source`
+    is derived from the existing `event` field (see VALID_SOURCES), not a
+    new column.
+    """
     query = supabase.table("notifications").select(_NOTIFICATION_SELECT, count="exact")
 
-    if status:
+    if statuses:
+        query = query.in_("status", list(statuses))
+    elif status:
         query = query.eq("status", status)
+
+    if channel:
+        query = query.eq("channel", channel)
+
+    if source == "ai_drafted":
+        query = query.eq("event", "agent_drafted")
+    elif source == "automated":
+        query = query.neq("event", "agent_drafted")
 
     start, end = _page_to_range(page, page_size)
     response = query.order("created_at", desc=True).range(start, end).execute()

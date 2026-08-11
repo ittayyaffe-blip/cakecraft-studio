@@ -85,12 +85,27 @@ def is_configured() -> bool:
 def retrieve(query: str, top_k: int = 5) -> list[dict]:
     """The most relevant knowledge base chunks for a query, via the
     pgvector cosine-distance RPC. Returns [] if the knowledge base
-    hasn't been ingested yet (an empty table, not an error).
+    hasn't been ingested yet (an empty table, not an error) — or if the
+    query itself TF-IDF-embeds to an all-zero vector, which happens when
+    every word in it is either an English stop word or outside the
+    knowledge base's fitted vocabulary (e.g. "Where can I pick it up?" —
+    "pick" never appears in the corpus, only "pickup" does, and the rest
+    are stop words). Cosine distance against a zero vector is undefined
+    (`0/0`), so pgvector's `<=>` returns NaN for every row and Postgres's
+    NaN ordering then returns an effectively arbitrary top_k, not an
+    actual relevance ranking — caught live via a direct diagnostic (see
+    Step 3C's RAG audit). Short-circuiting here routes these queries into
+    the exact same "no relevant knowledge" path already used for a genuinely
+    empty knowledge base, which every caller (rag_service.answer_question,
+    agent_service.draft_reply_to_inbound_message) already handles safely.
     """
     vectorizer = _load_vectorizer()
-    query_vector = embed_texts(vectorizer, [query])[0].tolist()
+    query_vector = embed_texts(vectorizer, [query])[0]
+    if not np.any(query_vector):
+        logger.info("RAG query embedded to an all-zero vector, skipping retrieval: %r", query)
+        return []
     response = supabase.rpc(
-        "match_knowledge_documents", {"query_embedding": query_vector, "match_count": top_k}
+        "match_knowledge_documents", {"query_embedding": query_vector.tolist(), "match_count": top_k}
     ).execute()
     return response.data
 

@@ -115,6 +115,45 @@ def test_answer_question_incorporates_retrieved_chunks_into_the_model_request():
     assert result["sources"] == [{"title": "Pricing Policy", "sourceFile": "pricing_policy.md", "similarity": 0.87}]
 
 
+def test_retrieve_returns_empty_for_all_zero_query_vector_without_calling_rpc():
+    # Step 3C RAG audit: a query embedding to an all-zero TF-IDF vector
+    # (every word either an English stop word or outside the knowledge
+    # base's vocabulary -- e.g. "Where can I pick it up?", since "pick"
+    # never appears in the corpus and the rest are stop words) used to
+    # be sent to the pgvector RPC anyway. Cosine distance against a zero
+    # vector is undefined, so Postgres returned NaN similarity for every
+    # row and an effectively arbitrary top_k -- caught live during the
+    # audit. retrieve() must short-circuit to [] instead, which routes
+    # callers into the same "no relevant knowledge" path they already
+    # handle safely for a genuinely empty knowledge base.
+    vectorizer = TfidfVectorizer(stop_words="english")
+    vectorizer.fit(["chocolate cake recipe", "vanilla frosting guide"])  # no overlap with the query below
+
+    with (
+        patch.object(rag_service, "_load_vectorizer", return_value=vectorizer),
+        patch.object(rag_service.supabase, "rpc") as mock_rpc,
+    ):
+        result = rag_service.retrieve("Where can I pick it up?", top_k=5)
+
+    assert result == []
+    mock_rpc.assert_not_called()  # never sends a meaningless zero vector to the RPC
+
+
+def test_answer_question_returns_early_when_no_chunks_without_calling_claude():
+    # Mirrors draft_reply_to_inbound_message's own "no chunks, don't call
+    # the LLM" rule (see agent_service.py) -- there is nothing to ground
+    # an answer in, so no Anthropic call should happen at all.
+    with (
+        patch.object(rag_service, "retrieve", return_value=[]) as mock_retrieve,
+        patch.object(rag_service.anthropic, "Anthropic") as mock_anthropic_cls,
+    ):
+        result = rag_service.answer_question("Do you deliver to the moon?")
+
+    mock_retrieve.assert_called_once_with("Do you deliver to the moon?", top_k=5)
+    mock_anthropic_cls.assert_not_called()
+    assert result == {"answer": "No relevant information found in the bakery knowledge base.", "sources": []}
+
+
 def test_answer_question_falls_back_cleanly_when_not_configured():
     fake_chunks = [
         {

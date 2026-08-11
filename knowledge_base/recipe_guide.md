@@ -16,7 +16,7 @@
 - **Dark Chocolate Ganache** — poured or whipped as an exterior finish, the most heat-stable of the three frostings, preferred for summer outdoor events.
 
 ## Sizing
-Three sizes are offered: **Small** (8–10 servings), **Medium**, and **Large**. Larger sizes take proportionally more bake and cooling time, not just more batter — a Large order should be started at least one production slot earlier than a Small of the same design complexity.
+Three sizes are offered. **Small** serves 8–10 people, **Medium** serves 12–15 people, and **Large** serves 18–22 people. Larger sizes take proportionally more bake and cooling time, not just more batter — a Large order should be started at least one production slot earlier than a Small of the same design complexity.
 
 ## Substitutions
 Flavor, filling, and frosting can be mixed freely across all five collections and templates — there is no fixed pairing requirement, only the pairings noted above as head-baker recommendations for taste and structural stability.

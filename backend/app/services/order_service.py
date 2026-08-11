@@ -212,3 +212,33 @@ def get_orders_for_customer(customer_id: str) -> list[dict]:
         .execute()
     )
     return response.data
+
+
+_OPEN_ORDER_STATUSES = tuple(s for s in ORDER_STATUSES if s not in ("completed", "cancelled"))
+
+
+def find_open_order_for_customer(customer_id: str) -> tuple[dict | None, str]:
+    """The confidently-identifiable "current" order for an inbound
+    message's customer (Step 3 — see inbound_service.py). Never guesses:
+    exactly one open (not completed/cancelled) order is a confident
+    match; zero is "none"; more than one is "ambiguous" — a human has to
+    say which order the customer means, since the AI Agent must not
+    accidentally answer about the wrong cake (see docstring on
+    agent_service.draft_reply_to_inbound_message).
+
+    "Open" rather than "most recent" on purpose: a customer messaging in
+    is far more likely asking about an order still in flight than a
+    finished one, and this project has no stronger signal today (e.g.
+    which order they're referring to in their own words) to disambiguate
+    with — a documented heuristic, not a claim of certainty.
+
+    Returns (order, match_status) where match_status is one of "matched",
+    "ambiguous", "none" — mirrors inbound_messages.order_match_status.
+    """
+    orders = get_orders_for_customer(customer_id)
+    open_orders = [o for o in orders if o["status"] in _OPEN_ORDER_STATUSES]
+    if len(open_orders) == 1:
+        return open_orders[0], "matched"
+    if len(open_orders) > 1:
+        return None, "ambiguous"
+    return None, "none"
