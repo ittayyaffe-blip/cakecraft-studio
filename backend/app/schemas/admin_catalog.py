@@ -42,3 +42,27 @@ class TemplateActiveUpdateRequest(BaseModel):
     for what it sets)."""
 
     active: bool
+
+
+class TemplateUpdateRequest(BaseModel):
+    """Body for `PATCH /admin/catalog/templates/{id}` — true PATCH
+    semantics: every field is optional, and only a field actually present
+    in the request is applied (see the route's use of `model_dump(
+    exclude_unset=True)`) — an omitted field leaves the stored value
+    untouched, while `preview_image: null` explicitly clears it (`str |
+    None` distinguishes "clear it" from "not mentioned" only in
+    combination with exclude_unset; the type alone can't).
+
+    `active` is deliberately not a field here — it stays Slice 2's own
+    dedicated `PATCH .../active` endpoint, not folded into general edits.
+    No validators here: this project's existing convention (see
+    order_service.update_order_status) validates in the service layer,
+    raising ValueError for a clean 400 — kept consistent rather than
+    introducing Pydantic-level validation as a new pattern.
+    """
+
+    name: str | None = None
+    category: str | None = None
+    style: str | None = None
+    base_price: float | None = None
+    preview_image: str | None = None

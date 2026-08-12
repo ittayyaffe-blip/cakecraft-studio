@@ -29,7 +29,7 @@ from fastapi import HTTPException
 
 from app.api.routes.admin import catalog
 from app.core.security import get_bearer_token, get_current_admin
-from app.schemas.admin_catalog import TemplateActiveUpdateRequest
+from app.schemas.admin_catalog import TemplateActiveUpdateRequest, TemplateUpdateRequest
 from app.services.auth_service import AdminIdentity
 
 _ADMIN = AdminIdentity(id="staff-1", email="baker@maisondegateau.fr", role="admin", access_token="t")
@@ -129,6 +129,121 @@ def test_set_template_active_404_when_template_not_found():
 
 def test_set_template_active_route_is_wired_to_the_shared_admin_dependency():
     admin_param = inspect.signature(catalog.set_template_active).parameters["admin"]
+    assert admin_param.default.dependency is get_current_admin
+
+
+# --- update_template: Catalog Management Slice 3 ----------------------------
+
+
+def test_update_template_records_audit_event_containing_only_the_changed_fields():
+    existing = {
+        "id": str(_TEMPLATE_ID),
+        "name": "Ivory Classic",
+        "category": "Wedding",
+        "style": "Classic",
+        "base_price": 250.0,
+        "preview_image": None,
+        "active": True,
+    }
+    updated = {**existing, "base_price": 300.0}
+    with (
+        patch.object(catalog.template_service, "get_template_by_id", return_value=existing) as mock_get,
+        patch.object(catalog.template_service, "update_template", return_value=updated) as mock_update,
+        patch.object(catalog, "record_event") as mock_record,
+    ):
+        result = catalog.update_template(
+            _TEMPLATE_ID, TemplateUpdateRequest(base_price=300.0), admin=_ADMIN
+        )
+
+    assert result == updated
+    mock_get.assert_called_once_with(str(_TEMPLATE_ID))
+    mock_update.assert_called_once_with(str(_TEMPLATE_ID), {"base_price": 300.0})
+    mock_record.assert_called_once_with(
+        actor_id=_ADMIN.id,
+        action="template.updated",
+        entity_type="cake_templates",
+        entity_id=str(_TEMPLATE_ID),
+        before={"base_price": 250.0},  # only the field that actually changed
+        after={"base_price": 300.0},
+    )
+
+
+def test_update_template_explicit_preview_image_null_is_forwarded_as_a_change():
+    existing = {"id": str(_TEMPLATE_ID), "preview_image": "https://example.com/old.jpg"}
+    updated = {**existing, "preview_image": None}
+    with (
+        patch.object(catalog.template_service, "get_template_by_id", return_value=existing),
+        patch.object(catalog.template_service, "update_template", return_value=updated) as mock_update,
+        patch.object(catalog, "record_event") as mock_record,
+    ):
+        catalog.update_template(_TEMPLATE_ID, TemplateUpdateRequest(preview_image=None), admin=_ADMIN)
+
+    mock_update.assert_called_once_with(str(_TEMPLATE_ID), {"preview_image": None})
+    mock_record.assert_called_once_with(
+        actor_id=_ADMIN.id,
+        action="template.updated",
+        entity_type="cake_templates",
+        entity_id=str(_TEMPLATE_ID),
+        before={"preview_image": "https://example.com/old.jpg"},
+        after={"preview_image": None},
+    )
+
+
+def test_update_template_omitted_preview_image_is_never_sent_to_the_service():
+    existing = {"id": str(_TEMPLATE_ID), "name": "Old Name", "preview_image": "https://example.com/keep.jpg"}
+    updated = {**existing, "name": "New Name"}
+    with (
+        patch.object(catalog.template_service, "get_template_by_id", return_value=existing),
+        patch.object(catalog.template_service, "update_template", return_value=updated) as mock_update,
+        patch.object(catalog, "record_event"),
+    ):
+        catalog.update_template(_TEMPLATE_ID, TemplateUpdateRequest(name="New Name"), admin=_ADMIN)
+
+    sent_fields = mock_update.call_args.args[1]
+    assert sent_fields == {"name": "New Name"}
+    assert "preview_image" not in sent_fields  # left alone, not overwritten with the unchanged value
+
+
+def test_update_template_404_when_template_not_found():
+    with (
+        patch.object(catalog.template_service, "get_template_by_id", return_value=None),
+        patch.object(catalog.template_service, "update_template") as mock_update,
+        patch.object(catalog, "record_event") as mock_record,
+    ):
+        try:
+            catalog.update_template(_TEMPLATE_ID, TemplateUpdateRequest(name="New Name"), admin=_ADMIN)
+        except HTTPException as exc:
+            assert exc.status_code == 404
+        else:
+            raise AssertionError("expected HTTPException(404), none was raised")
+
+    mock_update.assert_not_called()
+    mock_record.assert_not_called()
+
+
+def test_update_template_empty_body_is_rejected_as_400_without_recording_an_event():
+    # The service is the one place "no fields" is actually validated (see
+    # test_template_service.py) -- this confirms the route correctly maps
+    # that ValueError to a 400 rather than a 500, and never logs an event
+    # for a no-op.
+    existing = {"id": str(_TEMPLATE_ID), "name": "Ivory Classic"}
+    with (
+        patch.object(catalog.template_service, "get_template_by_id", return_value=existing),
+        patch.object(catalog.template_service, "update_template", side_effect=ValueError("No fields to update")),
+        patch.object(catalog, "record_event") as mock_record,
+    ):
+        try:
+            catalog.update_template(_TEMPLATE_ID, TemplateUpdateRequest(), admin=_ADMIN)
+        except HTTPException as exc:
+            assert exc.status_code == 400
+        else:
+            raise AssertionError("expected HTTPException(400), none was raised")
+
+    mock_record.assert_not_called()
+
+
+def test_update_template_route_is_wired_to_the_shared_admin_dependency():
+    admin_param = inspect.signature(catalog.update_template).parameters["admin"]
     assert admin_param.default.dependency is get_current_admin
 
 

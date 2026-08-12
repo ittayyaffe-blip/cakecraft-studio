@@ -161,6 +161,90 @@ def test_set_template_active_can_reactivate():
     templates_table.update.assert_called_once_with({"active": True})
 
 
+# --- update_template: Catalog Management Slice 3 ----------------------------
+
+
+def test_update_template_applies_only_the_supplied_fields():
+    refreshed = {"id": "t1", "name": "New Name", "category": "Wedding", "base_price": 300.0}
+    templates_table = _chainable(refreshed)
+    with patch.object(template_service, "supabase", _mock_supabase({"cake_templates": templates_table})):
+        result = template_service.update_template("t1", {"name": "New Name"})
+
+    assert result == refreshed
+    templates_table.update.assert_called_once_with({"name": "New Name"})  # nothing else sent
+
+
+def test_update_template_trims_whitespace_from_string_fields():
+    templates_table = _chainable({"id": "t1", "name": "New Name"})
+    with patch.object(template_service, "supabase", _mock_supabase({"cake_templates": templates_table})):
+        template_service.update_template("t1", {"name": "  New Name  "})
+
+    templates_table.update.assert_called_once_with({"name": "New Name"})
+
+
+def test_update_template_allows_explicit_preview_image_null_to_clear_it():
+    refreshed = {"id": "t1", "preview_image": None}
+    templates_table = _chainable(refreshed)
+    with patch.object(template_service, "supabase", _mock_supabase({"cake_templates": templates_table})):
+        result = template_service.update_template("t1", {"preview_image": None})
+
+    assert result["preview_image"] is None
+    templates_table.update.assert_called_once_with({"preview_image": None})
+
+
+def test_update_template_leaves_fields_not_supplied_completely_absent_from_the_update_call():
+    templates_table = _chainable({"id": "t1", "name": "New Name"})
+    with patch.object(template_service, "supabase", _mock_supabase({"cake_templates": templates_table})):
+        template_service.update_template("t1", {"name": "New Name"})
+
+    sent = templates_table.update.call_args.args[0]
+    assert "preview_image" not in sent
+    assert "category" not in sent
+    assert "style" not in sent
+    assert "base_price" not in sent
+    assert "active" not in sent  # structurally can't leak through this function
+
+
+def test_update_template_rejects_negative_base_price_before_any_db_update():
+    templates_table = _chainable({})
+    with patch.object(template_service, "supabase", _mock_supabase({"cake_templates": templates_table})):
+        try:
+            template_service.update_template("t1", {"base_price": -5})
+        except ValueError as exc:
+            assert "base_price" in str(exc)
+        else:
+            raise AssertionError("expected ValueError, none was raised")
+
+    templates_table.update.assert_not_called()
+
+
+def test_update_template_rejects_blank_strings_before_any_db_update():
+    templates_table = _chainable({})
+    with patch.object(template_service, "supabase", _mock_supabase({"cake_templates": templates_table})):
+        for field in ("name", "category", "style"):
+            try:
+                template_service.update_template("t1", {field: "   "})
+            except ValueError as exc:
+                assert field in str(exc)
+            else:
+                raise AssertionError(f"expected ValueError for blank {field}, none was raised")
+
+    templates_table.update.assert_not_called()
+
+
+def test_update_template_rejects_an_empty_fields_dict_before_any_db_update():
+    templates_table = _chainable({})
+    with patch.object(template_service, "supabase", _mock_supabase({"cake_templates": templates_table})):
+        try:
+            template_service.update_template("t1", {})
+        except ValueError as exc:
+            assert "No fields" in str(exc)
+        else:
+            raise AssertionError("expected ValueError, none was raised")
+
+    templates_table.update.assert_not_called()
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

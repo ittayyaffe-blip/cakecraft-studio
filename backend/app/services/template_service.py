@@ -76,3 +76,51 @@ def set_template_active(template_id: str, active: bool) -> dict:
     """
     supabase.table("cake_templates").update({"active": active}).eq("id", template_id).execute()
     return get_template_by_id(template_id)
+
+
+def update_template(template_id: str, fields: dict) -> dict:
+    """Partially update a template's editable identity fields -- name,
+    category, style, base_price, preview_image. Never `active`; that
+    stays set_template_active's own dedicated concern above, kept
+    separate on purpose (see app/api/routes/admin/catalog.py). Nothing
+    here can touch `active` or `bakery_id` even if asked to -- the only
+    caller builds `fields` from TemplateUpdateRequest, whose schema
+    doesn't declare either.
+
+    `fields` should already be pre-filtered to only the keys the caller
+    actually supplied (see the route's use of `body.model_dump(
+    exclude_unset=True)`) -- true PATCH semantics, an omitted key is left
+    untouched in the database. Validates the *values* of whatever keys
+    are present, mirroring order_service.update_order_status's shape: a
+    plain ValueError for a clean 400, checked before any `supabase` call,
+    then a single update, then re-fetched through the existing lookup
+    rather than trusting the update call's own response. Assumes the
+    template's existence has already been confirmed by the caller, same
+    assumption set_template_active makes.
+
+    Raises ValueError if `fields` is empty (nothing to do -- the caller
+    should reject this before it gets here in the common case, but this
+    function doesn't trust that), or if a supplied name/category/style is
+    blank, or a supplied base_price is negative (mirroring the `cake_
+    templates.base_price >= 0` check constraint from the initial schema
+    migration).
+    """
+    if not fields:
+        raise ValueError("No fields to update")
+
+    cleaned = dict(fields)
+
+    for key in ("name", "category", "style"):
+        if key in cleaned:
+            value = cleaned[key]
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{key} must not be empty")
+            cleaned[key] = value.strip()
+
+    if "base_price" in cleaned:
+        base_price = cleaned["base_price"]
+        if base_price is None or base_price < 0:
+            raise ValueError("base_price must be >= 0")
+
+    supabase.table("cake_templates").update(cleaned).eq("id", template_id).execute()
+    return get_template_by_id(template_id)
