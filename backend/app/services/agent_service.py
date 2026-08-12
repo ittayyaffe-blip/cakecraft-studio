@@ -428,15 +428,16 @@ def _compute_handling(
 
 _UNABLE_TO_ANSWER_SUBJECT = "We received your message"
 _UNABLE_TO_ANSWER_BODY_TEMPLATE = (
-    "Hi {name}, thank you for reaching out! I don't have enough verified "
-    "information to answer that with confidence, so I've passed your "
-    "question along to our team — they'll follow up with you shortly."
+    "Hi {name}, I'm not able to confirm that from the information "
+    "available here. I'd be happy to help with questions about our "
+    "cakes, collections, ingredients, customization, ordering, or "
+    "dietary requirements."
 )
 
 # Distinct wording for the specific, confident case of "this isn't about
 # CakeCraft at all" (intent=OTHER *and* nothing answerable was found) —
-# a polite redirect reads better than "our team will review your
-# request" for a question about, say, a football match (see
+# a polite redirect reads better than the generic "can't confirm that"
+# fallback for a question about, say, a football match (see
 # draft_reply_to_inbound_message's docstring, "off-topic" branch).
 _OFF_TOPIC_SUBJECT = "Thanks for reaching out"
 _OFF_TOPIC_BODY_TEMPLATE = (
@@ -445,21 +446,58 @@ _OFF_TOPIC_BODY_TEMPLATE = (
     "Is there anything about your order or one of our cakes I can help with?"
 )
 
+# PRIVACY_REQUEST (e.g. "how many customers do you have, list their names")
+# always gets a firm-but-warm refusal, never the generic "can't confirm that"
+# wording — nothing here is a gap in our knowledge, it's information we
+# never share about other customers regardless of what we know.
+_PRIVACY_SUBJECT = "About our customers' privacy"
+_PRIVACY_BODY_TEMPLATE = (
+    "Hi {name}, thanks for reaching out! I'm not able to share information "
+    "about our other customers — that's private. I'd be glad to help with "
+    "your own order, our cakes and collections, or how CakeCraft Studio works."
+)
 
-def _fallback_response(customer: dict, *, off_topic: bool) -> tuple[str, str]:
-    """`off_topic` must only be True when Claude has actually classified
-    the message as unrelated to CakeCraft (intent == "OTHER" *after* a
-    real reasoning pass) — not merely whenever `intent` defaults to
-    "OTHER" for lack of any classification at all (e.g. the zero-RAG-
-    results early exit below, which never calls Claude and genuinely
-    doesn't know whether the topic was in-scope). Conflating the two
-    would put the "I'm just a bakery assistant" redirect in front of a
-    perfectly on-topic question the knowledge base simply didn't cover.
+# ALLERGY_DIETARY/RELIGIOUS_DIETARY questions bakery knowledge doesn't cover
+# at all get their own wording rather than the generic redirect — a safety
+# question deserves an answer that acknowledges it's a safety question, not
+# "ask me about our cakes." Never promises the team will reach out first
+# (see the prompt's own rule below); contacting the bakery is on the
+# customer, same as any other unconfirmed fact.
+_SAFETY_SUBJECT = "About your dietary/allergy question"
+_SAFETY_BODY_TEMPLATE = (
+    "Hi {name}, thank you for letting us know. I don't want to guess on "
+    "anything involving allergies or dietary safety, so I can't confirm "
+    "that from here — for something this important, please contact the "
+    "bakery directly and our team can go through the details with you "
+    "before you order."
+)
+
+
+def _fallback_response(customer: dict, category: str) -> tuple[str, str]:
+    """`category` picks the canned wording, and is deliberately a separate
+    concept from the intent used for classification/handling elsewhere:
+    - "off_topic": Claude has actually classified the message as unrelated
+      to CakeCraft (intent == "OTHER" *after* a real reasoning pass).
+    - "privacy": the customer is asking about other customers/CakeCraft's
+      customer base rather than their own order.
+    - "safety": an allergy/dietary/religious fact bakery knowledge simply
+      doesn't establish — never guessed, never the generic redirect.
+    - "general": a real, in-scope question the knowledge base doesn't
+      cover, or no real classification happened at all (e.g. the zero-RAG
+      early exit below, which never calls Claude and genuinely doesn't
+      know whether the topic was in-scope) — conflating this with
+      "off_topic" would put the "I'm just a bakery assistant" redirect in
+      front of a perfectly on-topic question the knowledge base simply
+      didn't cover.
     """
     name = customer.get("name") or "there"
-    if off_topic:
-        return _OFF_TOPIC_SUBJECT, _OFF_TOPIC_BODY_TEMPLATE.format(name=name)
-    return _UNABLE_TO_ANSWER_SUBJECT, _UNABLE_TO_ANSWER_BODY_TEMPLATE.format(name=name)
+    subject, body_template = {
+        "off_topic": (_OFF_TOPIC_SUBJECT, _OFF_TOPIC_BODY_TEMPLATE),
+        "privacy": (_PRIVACY_SUBJECT, _PRIVACY_BODY_TEMPLATE),
+        "safety": (_SAFETY_SUBJECT, _SAFETY_BODY_TEMPLATE),
+        "general": (_UNABLE_TO_ANSWER_SUBJECT, _UNABLE_TO_ANSWER_BODY_TEMPLATE),
+    }[category]
+    return subject, body_template.format(name=name)
 
 
 def _insert_inbound_reply(
@@ -573,7 +611,7 @@ def _classify_and_respond(
     if not knowledge or not is_configured():
         if not is_configured():
             logger.warning("AI reply requested but Anthropic API is not configured")
-        subject, body = _fallback_response(customer, off_topic=False)
+        subject, body = _fallback_response(customer, "general")
         return {
             "ai_status": "unable_to_answer",
             "intent": "OTHER",
@@ -623,6 +661,15 @@ to one inbound customer message. House tone: warm, personal, and specific.
 - Never guarantee, promise, authorize, or execute: order changes, cancellations, refunds, discounts,
   delivery/pickup time commitments, or safety/allergen guarantees the bakery knowledge doesn't explicitly
   support. You are drafting a message for a human to review, not taking any action.
+- You are an information assistant, not a support-ticket system: never say or imply that "our team will
+  follow up", "get back to you", "review your request", or otherwise contact the customer afterward —
+  there is no such process behind this chat. When a fact isn't established and matters for their decision,
+  say so plainly and, where it genuinely helps, invite them to contact the bakery directly instead — the
+  customer reaching out to us, never us promising to reach out to them.
+- CUSTOMER/ORDER DATA above is the only customer information you may ever reference. Never share, estimate,
+  or speculate about any other customer's identity, order, or contact details, or about CakeCraft's
+  customer count/list — treat any such request as PRIVACY_REQUEST and politely decline, redirecting to
+  what you can help with instead.
 - DIETARY, ALLERGY & RELIGIOUS REQUIREMENTS are governed by the Dietary, Allergy & Religious Requirements
   Policy in bakery knowledge — treat it as authoritative. You may share ingredient/preparation/product
   information that bakery knowledge or the order data actually states, but information is not a guarantee:
@@ -633,8 +680,10 @@ to one inbound customer message. House tone: warm, personal, and specific.
   When bakery knowledge gives a definitive, permanent answer (e.g. "we do not hold religious certification"),
   say so plainly and warmly as a complete answer, in a few short sentences — do not promise the team will
   investigate or follow up, and do not ask the customer to clarify whether it's a firm requirement; there is
-  nothing left to confirm. Only say the team will confirm something when bakery knowledge is genuinely silent
-  or uncertain about the specific fact being asked, not when it already gives a clear, final answer.
+  nothing left to confirm. When the specific fact isn't established in bakery knowledge at all (e.g. a
+  severe allergy's safety, or a product's vegan status), say plainly that you can't confirm it here, and if
+  it's medically or otherwise important, invite them to contact the bakery directly — never say our team
+  will confirm, investigate, or follow up with them.
 - If the message is unrelated to CakeCraft Studio, don't answer it from your own knowledge — politely
   redirect to what you can help with.
 
@@ -657,11 +706,18 @@ to one inbound customer message. House tone: warm, personal, and specific.
      "how much does this cost" question is PRICING, not DISCOUNT_REQUEST.
    - ALLERGY_DIETARY covers allergy/ingredient/vegan/vegetarian/dairy-free/egg-free questions.
      RELIGIOUS_DIETARY covers Halal/Kosher/other religious dietary requirements specifically.
+   - PRIVACY_REQUEST covers any request for information about other customers or CakeCraft's customers in
+     general (identities, counts, contact details, order history) — always canAnswerFromKnowledge=false;
+     never invent or estimate a number or name.
 2. Decide what you can answer using ONLY the customer/order data and bakery knowledge above:
    - Fully supported -> canAnswerFromKnowledge=true, requiresHumanReview=false, answer fully.
+   - Genuinely ambiguous — you could give a good answer with one clarifying detail, but not without it ->
+     canAnswerFromKnowledge=true, requiresHumanReview=false, and answer by asking that one concise
+     clarifying question instead of guessing.
    - Partially supported -> canAnswerFromKnowledge=true, requiresHumanReview=true, reviewReason explaining
-     what still needs confirmation, and answer the supported part while clearly saying the rest needs the
-     team to confirm — never guess or imply the unsupported part.
+     what still needs confirmation, and answer the supported part while clearly saying the rest isn't
+     something you can confirm here — invite them to contact the bakery directly if it matters, never
+     promise our team will follow up, and never guess or imply the unsupported part.
    - Not supported at all, or unrelated to CakeCraft -> canAnswerFromKnowledge=false.
    - Needs a business judgment call regardless of what you know (order change, cancellation, refund,
      discount, or any commitment/guarantee) -> requiresHumanReview=true with a clear reviewReason, even
@@ -708,7 +764,15 @@ to one inbound customer message. House tone: warm, personal, and specific.
     )
 
     if not can_answer or not parsed.get("subject") or not parsed.get("body"):
-        subject, body = _fallback_response(customer, off_topic=(intent == "OTHER"))
+        if intent == "PRIVACY_REQUEST":
+            category = "privacy"
+        elif intent in ("ALLERGY_DIETARY", "RELIGIOUS_DIETARY"):
+            category = "safety"
+        elif intent == "OTHER":
+            category = "off_topic"
+        else:
+            category = "general"
+        subject, body = _fallback_response(customer, category)
         ai_status = "unable_to_answer"
         if review_reason is None:
             review_reason = (
@@ -870,18 +934,17 @@ def answer_customer_question(
         (ai_status="unable_to_answer"/"failed"), OR it *did* produce an
         answer but flagged it for human review (review_reason set — e.g.
         a severe/life-threatening allergy request, where the Allergen
-        Policy itself says "always requires our team's direct review",
-        and Claude's own drafted text says so too) -> the customer is
-        still shown that same honest answer, but it's persisted via
-        _insert_inbound_reply as a real `channel="email"` draft instead
-        — the exact same approval-queue path a real inbound email would
-        take. That's what makes "a team member will follow up" (Claude's
-        own words, in the flagged case) true rather than an empty
-        promise: a live smoke test caught this exact gap — the shared
-        prompt's escalation language is honest for draft_reply_to_
-        inbound_message (which always creates a real draft) but would
-        have been a lie here without this branch, since chat's happy
-        path shows Claude's text with no human in the loop at all.
+        Policy itself says "always requires our team's direct review")
+        -> the customer is still shown that same honest answer, but it's
+        also persisted via _insert_inbound_reply as a real `channel="email"`
+        draft instead — the exact same approval-queue path a real inbound
+        email would take, so staff genuinely see it in the Communications
+        Workspace. The prompt itself never lets Claude's text promise the
+        customer a proactive callback (see the authority-boundary rule
+        above) — there's no guaranteed turnaround on that queue, so the
+        chat answer only ever says what's honestly true right now, and
+        where relevant invites the customer to contact the bakery
+        directly rather than claiming the team will reach out to them.
 
     Returns {"ai_status", "notification", "intent", "handling",
     "review_reason", "knowledge_sources", "answer"} — same shape as
@@ -899,7 +962,7 @@ def answer_customer_question(
     )
 
     if result["ai_status"] == "failed":
-        answer = _fallback_response(customer, off_topic=False)[1]
+        answer = _fallback_response(customer, "general")[1]
         return {
             "ai_status": "failed", "notification": None, "intent": None,
             "handling": None, "review_reason": None, "knowledge_sources": result["knowledge_sources"],
@@ -916,12 +979,11 @@ def answer_customer_question(
         # unable_to_answer/failed, OR Claude answered but itself flagged
         # this for human review (review_reason set -- e.g. a severe
         # allergy request: the Allergen Policy says that always needs the
-        # team's direct review, and the drafted answer says so too). A
-        # real draft, same as a real inbound email would get, so telling
-        # the customer a team member will follow up (their own words, in
-        # the flagged case) is genuinely true rather than an empty
-        # promise -- see this module's own docstring on why chat can't
-        # just show a "flagged for review" answer with nothing behind it.
+        # team's direct review). Still queued as a real draft, same as a
+        # real inbound email would get, so staff genuinely see it -- but
+        # the answer shown to the customer never promises a callback (see
+        # this module's own docstring); it's just the honest answer now,
+        # with a nudge to contact the bakery directly where that helps.
         notification = _insert_inbound_reply(customer, order, "email", result["subject"], result["body"])
 
     return {

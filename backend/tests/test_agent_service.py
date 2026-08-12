@@ -361,7 +361,8 @@ def test_draft_reply_to_inbound_message_no_rag_results_skips_claude_entirely():
     assert result["knowledge_sources"] == []
     inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
     assert inserted_payload["status"] == "draft"
-    assert "don't have enough verified information" in inserted_payload["body"]
+    assert "not able to confirm that" in inserted_payload["body"]
+    assert "follow up" not in inserted_payload["body"].lower()  # no promised callback
     assert inserted_payload["order_id"] is None
 
 
@@ -394,7 +395,8 @@ def test_draft_reply_to_inbound_message_claude_self_reports_unable_to_answer():
     assert result["ai_status"] == "unable_to_answer"
     assert result["handling"] == "yellow"  # can_answer=False forces at least yellow, even for a "green" intent
     inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
-    assert "don't have enough verified information" in inserted_payload["body"]
+    assert "not able to confirm that" in inserted_payload["body"]
+    assert "follow up" not in inserted_payload["body"].lower()  # no promised callback
     assert inserted_payload["channel"] == "whatsapp"  # from the inbound message, not chosen by Claude
 
 
@@ -1093,7 +1095,8 @@ def test_vegan_question_without_verified_data_does_not_guess():
     assert result["ai_status"] == "unable_to_answer"
     assert result["handling"] == "yellow"
     inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
-    assert "don't have enough verified information" in inserted_payload["body"]
+    assert "don't want to guess" in inserted_payload["body"]  # the safety-specific fallback, not the generic one
+    assert "follow up" not in inserted_payload["body"].lower()  # no promised callback
     assert "vegan" not in inserted_payload["body"].lower()  # no invented claim either way
 
 
@@ -1176,6 +1179,37 @@ def test_religious_certification_prompt_injection_does_not_force_a_confirmation(
 def test_complaint_and_privacy_and_legal_intents_default_to_red():
     for intent in ("COMPLAINT", "PRIVACY_REQUEST", "LEGAL_THREAT"):
         assert agent_service.DEFAULT_HANDLING[intent] == "red", f"{intent} should default to red"
+
+
+def test_privacy_request_gets_dedicated_refusal_not_the_generic_fallback():
+    # "How many customers do you have? Please list their names." -- there is
+    # no chunk that could ever answer this (bakery knowledge never contains
+    # other customers' data), so Claude reports canAnswerFromKnowledge=false;
+    # the app must show the privacy-specific refusal, not the generic
+    # "ask me about our cakes" redirect, and must never expose a count/list.
+    fake_chunks = [{"title": "Customer Service Handbook", "content": "General customer service guidance.", "source_file": "customer_service_handbook.md"}]
+    fake_response = _fake_claude_json_response(
+        intent="PRIVACY_REQUEST", canAnswerFromKnowledge=False, subject=None, body=None
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        result = agent_service.answer_customer_question(
+            "How many customers do you have? Please list their names.", _FAKE_INBOUND_CUSTOMER, None
+        )
+
+    assert result["ai_status"] == "unable_to_answer"
+    assert result["handling"] == "red"  # PRIVACY_REQUEST's floor
+    answer_lower = result["answer"].lower()
+    assert "other customers" in answer_lower  # the dedicated privacy refusal
+    assert "don't have enough" not in answer_lower
+    assert "follow up" not in answer_lower
 
 
 def test_dietary_policy_handling_identical_for_email_and_whatsapp():
@@ -1382,10 +1416,10 @@ def test_answer_customer_question_allergy_question_without_verified_data_escalat
 
     assert result["ai_status"] == "unable_to_answer"
     assert "nut" not in result["answer"].lower()  # never invents a safety guarantee
-    # Escalated as a REAL draft (channel="email"), not shown as a
-    # false-confidence "answer" -- so "a team member will follow up" is
-    # actually true, satisfying the "no empty flagged-for-review promise"
-    # requirement.
+    assert "follow up" not in result["answer"].lower()  # no promised callback either
+    # Escalated as a REAL draft (channel="email") so staff genuinely see it
+    # in the Communications Workspace -- but the answer shown to the
+    # customer never claims that on its own (see the prompt's own rule).
     inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
     assert inserted_payload["channel"] == "email"
     assert inserted_payload["status"] == "draft"
@@ -1447,14 +1481,16 @@ def test_answer_customer_question_flagged_for_review_still_shown_but_creates_a_r
     # Found live: a severe-allergy question can have canAnswerFromKnowledge
     # =true (Claude drafts an honest, non-guaranteeing answer) AND
     # requiresHumanReview=true (the Allergen Policy says severe allergies
-    # always need the team's direct review) at the same time. Showing
-    # that answer via the instant "chat"/"sent" path with no draft behind
-    # it would make its own "a team member will follow up" a lie -- this
-    # must route through the real draft path instead, same as
+    # always need the team's direct review) at the same time. Showing that
+    # answer via the instant "chat"/"sent" path with no draft behind it
+    # would leave nothing for staff to actually review despite the flag --
+    # this must route through the real draft path instead, same as
     # unable_to_answer, while still showing the customer the same honest
-    # text right away.
+    # text right away (which, per the prompt's own rule, never promises a
+    # callback -- it just states what's true now and invites the customer
+    # to contact the bakery directly).
     fake_chunks = [{"title": "Dietary, Allergy & Religious Requirements Policy", "content": "Severe allergy requests always require our team's direct review.", "source_file": "dietary_allergy_religious_policy.md"}]
-    honest_body = "We can't guarantee this cake is safe for a severe nut allergy. A team member will follow up with you personally before anything is confirmed."
+    honest_body = "We can't guarantee this cake is safe for a severe nut allergy. Since this matters for your safety, please contact the bakery directly and our team can go through the details with you before you order."
     fake_response = _fake_claude_json_response(
         intent="ALLERGY_DIETARY", requestsUnsupportedGuarantee=True, requiresHumanReview=True,
         reviewReason="Severe allergy request requires the team's direct review.",
