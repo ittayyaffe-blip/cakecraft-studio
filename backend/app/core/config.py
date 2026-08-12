@@ -69,6 +69,29 @@ class Settings:
     whatsapp_access_token: str | None = os.environ.get("WHATSAPP_ACCESS_TOKEN")
     whatsapp_phone_number_id: str | None = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
 
+    # Inbound WhatsApp (Step 3) — the Meta Cloud API webhook needs two
+    # additional secrets the outbound adapter above never needed:
+    # whatsapp_webhook_verify_token: an arbitrary string *we* choose, given
+    # to Meta when configuring the webhook URL; Meta echoes it back on the
+    # one-time GET verification handshake (app/api/routes/webhooks.py) —
+    # this is what proves the person configuring the webhook is us, not a
+    # stranger, not a delivery-content secret.
+    # whatsapp_app_secret: the Meta App Secret, used to verify the
+    # X-Hub-Signature-256 header Meta signs every real webhook POST with
+    # (HMAC-SHA256 over the raw body) — this is what proves an inbound
+    # request actually came from Meta, not an arbitrary POST to a public
+    # URL. Both unset today means the webhook route rejects every request
+    # rather than accepting unverified ones — see whatsapp_inbound.py.
+    whatsapp_webhook_verify_token: str | None = os.environ.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
+    whatsapp_app_secret: str | None = os.environ.get("WHATSAPP_APP_SECRET")
+
+    # Inbound Gmail (Step 3) — IMAP polling of the *same* Gmail account
+    # GMAIL_ADDRESS/GMAIL_APP_PASSWORD above already sends from (an App
+    # Password authorizes IMAP too, not just SMTP — no new Google-side
+    # setup, no new credential). Unset (i.e. Gmail not configured at all)
+    # means inbound polling is skipped the same way outbound send already
+    # degrades — see communication/gmail_inbound.py.
+
     # --- Business Intelligence Layer (RAG + AI Operations Agent) -------
     # Optional, same feature-flag-by-presence pattern as the communication
     # adapters above: unset means rag_service.py/agent_service.py report

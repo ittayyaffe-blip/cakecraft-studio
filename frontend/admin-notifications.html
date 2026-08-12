@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Notifications | Backoffice | Maison de Gâteau Paris</title>
+  <title>Communications | Backoffice | Maison de Gâteau Paris</title>
   <meta name="robots" content="noindex, nofollow">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -27,7 +27,7 @@
         <a class="admin-nav-link" href="admin-dashboard.html">Dashboard</a>
         <a class="admin-nav-link" href="admin-orders.html">Orders</a>
         <a class="admin-nav-link" href="admin-customers.html">Customers</a>
-        <a class="admin-nav-link" href="admin-notifications.html">Notifications</a>
+        <a class="admin-nav-link" href="admin-notifications.html">Communications</a>
       </nav>
     </aside>
 
@@ -37,7 +37,7 @@
           <span class="sr-only">Toggle menu</span>
           <span aria-hidden="true">&#9776;</span>
         </button>
-        <h1 class="admin-topbar__title">Notifications</h1>
+        <h1 class="admin-topbar__title">Communications</h1>
         <div class="admin-topbar__account">
           <span class="admin-topbar__who" id="adminWho"></span>
           <button class="btn btn-small" id="adminLogoutBtn" type="button">Log out</button>
@@ -45,14 +45,30 @@
       </header>
 
       <main class="admin-content">
+        <section class="admin-panel" aria-labelledby="inboxHeading" id="inboxSection">
+          <div class="admin-panel__header">
+            <h2 id="inboxHeading">Inbox</h2>
+            <button class="btn btn-small" type="button" id="checkEmailBtn">Check for new messages</button>
+          </div>
+          <p class="admin-briefing__generated">Inbound messages that still need attention — an unrecognized sender, or a message the AI Agent couldn't turn into a draft yet. A message that already has a draft appears below in the regular list instead.</p>
+          <div id="inboxContainer"></div>
+        </section>
+
         <form class="admin-search-form" id="notificationsFilterForm" role="search">
-          <select id="notificationsStatusFilter" name="status" aria-label="Filter by status">
-            <option value="">All statuses</option>
-            <option value="queued">Queued</option>
-            <option value="draft">Draft</option>
-            <option value="awaiting_approval">Awaiting Approval</option>
-            <option value="approved">Approved</option>
+          <select id="notificationsViewFilter" name="view" aria-label="View">
+            <option value="needs_review">Needs Review</option>
             <option value="sent">Sent</option>
+            <option value="all">All</option>
+          </select>
+          <select id="notificationsChannelFilter" name="channel" aria-label="Filter by channel">
+            <option value="">All channels</option>
+            <option value="email">Email</option>
+            <option value="whatsapp">WhatsApp</option>
+          </select>
+          <select id="notificationsSourceFilter" name="source" aria-label="Filter by source">
+            <option value="">All sources</option>
+            <option value="automated">Automated</option>
+            <option value="ai_drafted">AI-Drafted</option>
           </select>
           <button type="submit" class="btn btn-small">Filter</button>
         </form>
@@ -69,9 +85,9 @@
   </div>
 
   <div class="admin-drawer-backdrop is-hidden" id="notificationDrawerBackdrop"></div>
-  <aside class="admin-drawer is-hidden" id="notificationDrawer" aria-hidden="true" aria-label="Notification details">
+  <aside class="admin-drawer is-hidden" id="notificationDrawer" aria-hidden="true" aria-label="Communication details">
     <div class="admin-drawer__header">
-      <h2>Notification</h2>
+      <h2>Communication</h2>
       <button type="button" class="admin-drawer__close" id="notificationDrawerClose" aria-label="Close notification details">&times;</button>
     </div>
     <div class="admin-drawer__body" id="notificationDrawerBody"></div>

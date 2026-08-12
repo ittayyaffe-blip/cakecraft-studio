@@ -732,6 +732,24 @@ h3 {
   margin: 0 0 0.5rem;
 }
 
+/* Email CTA — same footer contact block, made clearly clickable (the
+   raw mailto: address alone wasn't obviously a tappable element). Reuses
+   the footer's existing accent tokens rather than introducing new ones. */
+.site-footer__email-link {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.site-footer__email-label {
+  color: var(--color-rose-gold);
+  font-weight: 600;
+}
+
+.site-footer__email-address {
+  font-size: 0.9rem;
+}
+
 .social-list {
   display: flex;
   gap: var(--space-2);
@@ -1171,6 +1189,37 @@ h3 {
 
 #customer-info .template-detail .btn {
   margin-top: var(--space-5);
+}
+
+.policy-disclosure {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-ivory);
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+}
+
+.policy-disclosure summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+  color: var(--color-brown);
+}
+
+.policy-disclosure summary::marker {
+  color: var(--color-gold);
+}
+
+.policy-disclosure p {
+  margin: var(--space-2) 0 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--color-brown-soft);
+}
+
+.policy-disclosure p + p {
+  margin-top: var(--space-2);
 }
 
 #customer-info #submitOrderBtn {
@@ -2257,11 +2306,91 @@ h3 {
   color: #a13a3a;
 }
 
+/* Channel badges (Communications Workspace, Step 2) — every notification
+   has a channel from creation now (see notification_service._insert_queued),
+   not only after send. Reuses existing badge colors rather than inventing
+   new ones: WhatsApp's real brand color is green, already this file's
+   "ready"/"sent" palette; email reuses the same blue already used for
+   confirmed/approved. */
+.status-badge--channel-email {
+  background: #e3edf7;
+  color: #2b5788;
+}
+
+.status-badge--channel-whatsapp {
+  background: #e6f2ea;
+  color: #2c7a49;
+}
+
+/* Source badges — distinguishes an automated, order-status-triggered
+   notification from one the AI Agent drafted on demand. Reuses the same
+   gold accent already used for AI-related UI elsewhere (e.g. the
+   completed/delivered badges above); automated reuses the neutral
+   "queued" tone since it's the unremarkable, system-generated default. */
+.status-badge--source-automated {
+  background: var(--color-ivory-dark);
+  color: var(--color-brown-soft);
+}
+
+.status-badge--source-ai_drafted {
+  background: var(--color-gold-light);
+  color: var(--color-brown);
+}
+
+/* Handling badges (Step 3B) -- the application's own risk decision, not
+   Claude's (see agent_service._compute_handling): green means the AI's
+   answer can stand on its own, yellow/red both mean a human decides, not
+   the AI -- reuses the existing "ready"/green and "cancelled"/red order-
+   status colors above for the same at-a-glance color language staff
+   already know from the Orders screen. */
+.status-badge--handling-green {
+  background: #e6f2ea;
+  color: #2c7a49;
+}
+
+.status-badge--handling-yellow {
+  background: #f3ebdc;
+  color: #7a5a2e;
+}
+
+.status-badge--handling-red {
+  background: #f7e3e3;
+  color: #a13a3a;
+}
+
 .notification-preview {
   background: var(--color-ivory);
   border: 1px solid var(--color-ivory-dark);
   border-radius: var(--radius);
   padding: var(--space-2);
+}
+
+/* Step 3B "human review required" callout -- why the AI didn't (fully)
+   answer on its own, not just a bare "AI failed". Same warm/cautious
+   tone as .status-badge--handling-yellow rather than the sharper
+   .admin-state--error red, since this isn't a system failure. */
+.admin-review-callout {
+  background: #f3ebdc;
+  border: 1px solid #e0cba8;
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  margin-bottom: var(--space-2);
+  color: #7a5a2e;
+}
+
+.admin-review-callout__title {
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+}
+
+.admin-review-callout p {
+  margin: 0;
+}
+
+.admin-knowledge-used {
+  font-size: 0.85rem;
+  color: var(--color-brown-soft);
+  margin: 0 0 var(--space-2);
 }
 
 .notification-preview__subject {

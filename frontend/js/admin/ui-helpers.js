@@ -28,6 +28,7 @@ function renderStatusBadge(status) {
 // still render (falling back to the raw key, same as ORDER_STATUS_LABELS
 // already does for an unrecognized order status).
 const NOTIFICATION_EVENT_LABELS = {
+  order_received: "Order Received",
   order_confirmed: "Order Confirmed",
   baking_started: "Baking Started",
   ready_for_pickup: "Ready for Pickup",
@@ -45,6 +46,56 @@ const NOTIFICATION_STATUS_LABELS = {
   failed: "Failed",
 };
 
+// Step 3 — an inbound message's own processing status (distinct from a
+// notification's status: this describes what the AI Agent did with the
+// customer's message, not an outbound approval/delivery stage). Mirrors
+// backend/app/services/inbound_service.py's ai_status values.
+const INBOUND_AI_STATUS_LABELS = {
+  pending: "Pending",
+  processing: "Processing",
+  drafted: "Drafted",
+  unable_to_answer: "Unable to Answer",
+  failed: "Needs Attention",
+};
+
+// Step 3B — Communication Intelligence & Guardrails. Mirrors backend/app/
+// services/agent_service.py's INTENTS exactly (a human label per value,
+// same closed set, nothing invented client-side).
+const INTENT_LABELS = {
+  PRODUCT_QUESTION: "Product Question",
+  NEW_ORDER_INQUIRY: "New Order Inquiry",
+  ORDER_STATUS: "Order Status",
+  ORDER_CHANGE_REQUEST: "Order Change",
+  PRICING: "Pricing",
+  DISCOUNT_REQUEST: "Discount Request",
+  REFUND_REQUEST: "Refund Request",
+  DELIVERY: "Delivery",
+  PICKUP: "Pickup",
+  ALLERGY_DIETARY: "Allergy / Dietary",
+  RELIGIOUS_DIETARY: "Religious Requirement",
+  COMPLAINT: "Complaint",
+  PRIVACY_REQUEST: "Privacy Request",
+  LEGAL_THREAT: "Legal Threat",
+  GENERAL_QUESTION: "General Question",
+  HUMAN_REQUEST: "Human Requested",
+  OTHER: "Other",
+};
+
+// handling is the application's own risk decision (never Claude's — see
+// agent_service._compute_handling) — "AI Answer" for green (the AI could
+// prepare a normal grounded response), "Human Review" for yellow/red (a
+// business judgment call or a prohibited-autonomous-action category; the
+// UI doesn't need to distinguish yellow from red beyond color, both mean
+// "a human decides this, not the AI").
+const HANDLING_LABELS = { green: "AI Answer", yellow: "Human Review", red: "Human Review" };
+
+function renderHandlingBadge(handling) {
+  const span = document.createElement("span");
+  span.className = `status-badge status-badge--handling-${handling}`;
+  span.textContent = HANDLING_LABELS[handling] || handling;
+  return span;
+}
+
 // Reuses the same .status-badge component renderStatusBadge already
 // defines — just a different label lookup and modifier-class namespace
 // (status-badge--notification-*) so notification statuses (draft,
@@ -54,6 +105,41 @@ function renderNotificationStatusBadge(status) {
   const span = document.createElement("span");
   span.className = `status-badge status-badge--notification-${status}`;
   span.textContent = NOTIFICATION_STATUS_LABELS[status] || status;
+  return span;
+}
+
+// Communications Workspace (Step 2). channel is nullable only for
+// notifications created before this feature (older rows never got a
+// default) -- new ones always have one (see notification_service.
+// _insert_queued / agent_service.draft_customer_communication) -- so this
+// falls back to "email" (matching notification_service._dispatch's own
+// DEFAULT_CHANNEL resolution) rather than showing nothing.
+const CHANNEL_LABELS = { email: "Email", whatsapp: "WhatsApp" };
+
+function renderChannelBadge(channel) {
+  const resolved = channel || "email";
+  const span = document.createElement("span");
+  span.className = `status-badge status-badge--channel-${resolved}`;
+  span.textContent = CHANNEL_LABELS[resolved] || resolved;
+  return span;
+}
+
+// Source is derived from the existing `event` field, not a stored value:
+// "agent_drafted" is the one event key the AI Agent's on-demand draft path
+// uses (see agent_service.py); every other event key comes from an
+// order-status transition's deterministic template, i.e. "automated" —
+// mirrors backend/app/services/notification_service.py's VALID_SOURCES.
+const SOURCE_LABELS = { automated: "Automated", ai_drafted: "AI-Drafted" };
+
+function getNotificationSource(event) {
+  return event === "agent_drafted" ? "ai_drafted" : "automated";
+}
+
+function renderSourceBadge(event) {
+  const source = getNotificationSource(event);
+  const span = document.createElement("span");
+  span.className = `status-badge status-badge--source-${source}`;
+  span.textContent = SOURCE_LABELS[source];
   return span;
 }
 

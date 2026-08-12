@@ -3,6 +3,8 @@
 *Project Architecture & Engineering Handbook*
 ---
 
+> **Note (historical document):** This is an early-project architecture document. Several items described below as "future" (AI, RAG, email delivery, and others) are now implemented. For the current, accurate architecture, see [`FINAL_ARCHITECTURE.md`](FINAL_ARCHITECTURE.md).
+
 > **Purpose**
 > This document defines the architectural vision, engineering principles, and long-term design decisions that guide the development of CakeCraft Studio. It serves as the primary reference for architectural decisions and should evolve alongside the project.
 

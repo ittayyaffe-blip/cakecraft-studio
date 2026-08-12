@@ -1,30 +1,33 @@
-// CakeCraft Studio Backoffice — Notification Queue page: filter by status,
-// paginate, and drive the approval workflow from a detail drawer (same
+// CakeCraft Studio Backoffice — Communications workspace: the user-facing
+// name for what's still the Notification Queue underneath (same table,
+// same API — see backend/app/api/routes/admin/notifications.py). Simple
+// workflow: draft -> Send -> sent/failed, a human always clicks Send,
+// nothing goes out automatically. Filter by view/channel/source,
+// paginate, and drive that workflow from a detail drawer (same
 // open/close/backdrop pattern as admin-orders.js's order drawer, reused
-// rather than reinvented). Status filter state lives in the URL query
-// string, same convention as every other admin list page.
+// rather than reinvented). Filter state lives in the URL query string,
+// same convention as every other admin list page.
 //
 // Render functions build DOM via createElement + textContent, not
 // innerHTML + interpolation — the notification body itself is rendered
 // from a template today (see backend/app/services/notification_templates.py)
-// but is *editable* by staff (the whole point of the approval workflow is
-// a human can rewrite it before it goes out), so by the time this page
+// but is *editable* by staff before it's sent, so by the time this page
 // displays it, it's staff-authored free text — the same trust boundary as
 // customer-submitted fields elsewhere in this admin app.
 
 const NOTIFICATIONS_PAGE_SIZE = 20;
-const ALL_NOTIFICATION_STATUSES = [
-  "queued",
-  "draft",
-  "awaiting_approval",
-  "approved",
-  "sent",
-];
+
+// "Needs Review" is the default landing view — what a staff member opening
+// Communications should see first is what needs their attention, not an
+// unfiltered firehose (mirrors admin/notifications.py's VIEW_STATUSES).
+const DEFAULT_NOTIFICATIONS_VIEW = "needs_review";
 
 function getNotificationsStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
   return {
-    status: params.get("status") || "",
+    view: params.get("view") || DEFAULT_NOTIFICATIONS_VIEW,
+    channel: params.get("channel") || "",
+    source: params.get("source") || "",
     page: Number(params.get("page")) || 1,
     id: params.get("id") || null,
   };
@@ -32,7 +35,9 @@ function getNotificationsStateFromUrl() {
 
 function setNotificationsStateInUrl(state, { replace = false } = {}) {
   const params = new URLSearchParams();
-  if (state.status) params.set("status", state.status);
+  if (state.view && state.view !== DEFAULT_NOTIFICATIONS_VIEW) params.set("view", state.view);
+  if (state.channel) params.set("channel", state.channel);
+  if (state.source) params.set("source", state.source);
   if (state.page && state.page !== 1) params.set("page", String(state.page));
   if (state.id) params.set("id", state.id);
 
@@ -52,6 +57,15 @@ function truncate(text, maxLength) {
 
 // --- Queue table -------------------------------------------------------
 
+// Step 3B's intent/handling/review_reason/knowledge_sources arrive via a
+// reverse embed (see backend/app/services/notification_service.py's
+// _NOTIFICATION_SELECT) -- PostgREST always returns that as a list, at
+// most one entry by construction; every call site just wants "the one
+// entry, or none for a non-inbound-drafted notification".
+function getNotificationIntelligence(notification) {
+  return (notification.inbound_messages && notification.inbound_messages[0]) || null;
+}
+
 function renderNotificationsTable(notifications) {
   const container = document.getElementById("notificationsTableContainer");
   container.innerHTML = "";
@@ -66,7 +80,7 @@ function renderNotificationsTable(notifications) {
 
   const thead = document.createElement("thead");
   thead.innerHTML =
-    "<tr><th>Customer</th><th>Event</th><th>Status</th><th>Preview</th><th>Created</th></tr>";
+    "<tr><th>Customer</th><th>Channel</th><th>Event</th><th>Intent</th><th>Handling</th><th>Status</th><th>Preview</th><th>Created</th></tr>";
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
@@ -75,11 +89,30 @@ function renderNotificationsTable(notifications) {
     tr.className = "admin-table__row--clickable";
     tr.tabIndex = 0;
 
+    const intelligence = getNotificationIntelligence(notification);
+
     const customerCell = document.createElement("td");
     customerCell.textContent = notification.customers ? notification.customers.name : "—";
 
+    const channelCell = document.createElement("td");
+    channelCell.appendChild(renderChannelBadge(notification.channel));
+
     const eventCell = document.createElement("td");
-    eventCell.textContent = NOTIFICATION_EVENT_LABELS[notification.event] || notification.event;
+    eventCell.append(
+      document.createTextNode(NOTIFICATION_EVENT_LABELS[notification.event] || notification.event),
+      document.createElement("br"),
+      renderSourceBadge(notification.event)
+    );
+
+    const intentCell = document.createElement("td");
+    intentCell.textContent = intelligence && intelligence.intent ? (INTENT_LABELS[intelligence.intent] || intelligence.intent) : "—";
+
+    const handlingCell = document.createElement("td");
+    if (intelligence && intelligence.handling) {
+      handlingCell.appendChild(renderHandlingBadge(intelligence.handling));
+    } else {
+      handlingCell.textContent = "—";
+    }
 
     const statusCell = document.createElement("td");
     statusCell.appendChild(renderNotificationStatusBadge(notification.status));
@@ -91,7 +124,7 @@ function renderNotificationsTable(notifications) {
     const createdCell = document.createElement("td");
     createdCell.textContent = formatDateTime(notification.created_at);
 
-    tr.append(customerCell, eventCell, statusCell, previewCell, createdCell);
+    tr.append(customerCell, channelCell, eventCell, intentCell, handlingCell, statusCell, previewCell, createdCell);
 
     const open = () => openNotificationDrawer(notification.id);
     tr.addEventListener("click", open);
@@ -123,11 +156,15 @@ async function loadNotifications() {
   const container = document.getElementById("notificationsTableContainer");
   renderLoadingState(container, "Loading notifications…");
 
-  document.getElementById("notificationsStatusFilter").value = state.status;
+  document.getElementById("notificationsViewFilter").value = state.view;
+  document.getElementById("notificationsChannelFilter").value = state.channel;
+  document.getElementById("notificationsSourceFilter").value = state.source;
 
   try {
     const result = await getAdminNotifications({
-      status: state.status || undefined,
+      view: state.view,
+      channel: state.channel || undefined,
+      source: state.source || undefined,
       page: state.page,
       pageSize: NOTIFICATIONS_PAGE_SIZE,
     });
@@ -142,8 +179,10 @@ function initFilterForm() {
   const form = document.getElementById("notificationsFilterForm");
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    const status = document.getElementById("notificationsStatusFilter").value;
-    setNotificationsStateInUrl({ status, page: 1 });
+    const view = document.getElementById("notificationsViewFilter").value;
+    const channel = document.getElementById("notificationsChannelFilter").value;
+    const source = document.getElementById("notificationsSourceFilter").value;
+    setNotificationsStateInUrl({ view, channel, source, page: 1 });
     loadNotifications();
   });
 }
@@ -243,30 +282,28 @@ function buildPreviewBlock(notification, { editable }) {
   return wrap;
 }
 
-function buildActionBar(notification, { sendError } = {}) {
+function buildActionBar(notification) {
   const bar = document.createElement("div");
   bar.className = "notification-actions";
 
   const errorEl = document.createElement("p");
   errorEl.className = "admin-state admin-state--error is-hidden";
   errorEl.setAttribute("role", "alert");
-  if (sendError) {
-    errorEl.textContent = `Send failed: ${sendError}`;
-    errorEl.classList.remove("is-hidden");
-  }
 
   const runAction = async (actionFn) => {
     errorEl.classList.add("is-hidden");
     try {
       const result = await actionFn(notification.id);
       // send() reports a real delivery failure as a 200 with
-      // status: "failed" (never sent, never thrown, never retried
-      // automatically -- see notification_service.send()), not an HTTP
-      // error, so it needs checking directly: the adapter's error text
-      // only exists on this direct response, not on a later GET, so a
-      // plain drawer refresh would lose it.
+      // status: "failed" (never sent, never a thrown error, never
+      // retried automatically — see notification_service.send()), not an
+      // HTTP error, so this is the one place that result needs
+      // inspecting directly rather than just refreshing the drawer: the
+      // adapter's error text (result.error) only exists on this direct
+      // response, not on a later GET, so it has to be shown from here.
       if (result && result.status === "failed" && result.error) {
-        renderNotificationDetail(result, { sendError: result.error });
+        const sourceMessage = await getNotificationSourceMessage(notification.id).catch(() => null);
+        renderNotificationDetail(result, sourceMessage);
         loadNotifications();
         return;
       }
@@ -288,13 +325,13 @@ function buildActionBar(notification, { sendError } = {}) {
   };
 
   // Simplified workflow: draft -> Send -> sent/failed. No separate
-  // submit-for-approval/approve step (removed -- it only added clicks at
+  // submit-for-approval/approve step (removed — it only added clicks at
   // this project's current stage, not a real second decision-maker); the
   // one safety principle that step existed for is unchanged, a draft is
   // never sent automatically, this button is the one human click that
-  // ever triggers send(). "failed" gets the exact same action -- retry is
+  // ever triggers send(). "failed" gets the exact same button — retry is
   // just clicking Send again, no extra step to get back to draft first.
-  // awaiting_approval/approved stay sendable too (see
+  // awaiting_approval/approved are kept sendable too (see
   // notification_service._SEND_ALLOWED_FROM) purely so nothing created by
   // the old workflow, before this change, is ever stuck with no action.
   if (["draft", "awaiting_approval", "approved", "failed"].includes(notification.status)) {
@@ -315,9 +352,17 @@ function buildActionBar(notification, { sendError } = {}) {
   return bar;
 }
 
-function renderNotificationDetail(notification, { sendError } = {}) {
+// sourceMessage is the inbound customer message this draft was created
+// from (Step 3), or null for every notification created by the other
+// paths (an order-status change, or a staff-initiated on-demand draft) --
+// most notifications, not an error. Fetched alongside the notification
+// itself in openNotificationDrawer, not inside this function, so this
+// stays a plain synchronous render like every other call site expects.
+function renderNotificationDetail(notification, sourceMessage) {
   const body = document.getElementById("notificationDrawerBody");
   body.innerHTML = "";
+
+  const intelligence = getNotificationIntelligence(notification);
 
   appendDetailRow(body, "Customer", notification.customers ? notification.customers.name : "—");
   appendDetailRow(body, "Email", notification.customers ? notification.customers.email : "—");
@@ -326,6 +371,17 @@ function renderNotificationDetail(notification, { sendError } = {}) {
     "Event",
     NOTIFICATION_EVENT_LABELS[notification.event] || notification.event
   );
+
+  // Step 3B "Order context" — the minimum a reviewer needs (which cake,
+  // current status, when it's due), only shown when this draft is
+  // actually tied to one (order_id is nullable — see the Step 3
+  // migration; a general/prospective question has none).
+  if (notification.orders) {
+    const template = notification.orders.cake_templates;
+    const orderSummary = template ? `${template.name} (${template.category}) — ${notification.orders.status}` : notification.orders.status;
+    appendDetailRow(body, "Order", orderSummary);
+  }
+
   appendDetailRow(body, "Created", formatDateTime(notification.created_at));
 
   const statusRow = document.createElement("div");
@@ -336,21 +392,107 @@ function renderNotificationDetail(notification, { sendError } = {}) {
   statusRow.append(statusLabel, renderNotificationStatusBadge(notification.status));
   body.appendChild(statusRow);
 
-  // Only present once a real adapter (Gmail, as of Sprint 3) has actually
-  // attempted delivery — null/absent for anything still queued/draft/
-  // awaiting_approval/approved, and for every notification the seeder
-  // creates while no adapter is configured (see notification_service._dispatch).
-  if (notification.channel) {
-    appendDetailRow(body, "Channel", notification.channel);
+  // Only present on the direct response to a /send call that just failed
+  // (see buildActionBar's runAction) — a real delivery error (bad
+  // recipient, SMTP failure, etc.), not persisted, so it's shown once,
+  // right when it's most actionable, and won't reappear on a later
+  // reload of this same notification (status alone still shows "Failed").
+  if (notification.status === "failed" && notification.error) {
+    const errorCallout = document.createElement("div");
+    errorCallout.className = "admin-review-callout";
+    const title = document.createElement("p");
+    title.className = "admin-review-callout__title";
+    title.textContent = "Send failed";
+    const reason = document.createElement("p");
+    reason.textContent = notification.error;
+    errorCallout.append(title, reason);
+    body.appendChild(errorCallout);
   }
+
+  // Every notification has a channel from creation now (Communications
+  // Workspace, Step 2 — see notification_service._insert_queued /
+  // agent_service.draft_customer_communication), so this is always shown,
+  // not just once a real adapter has actually attempted delivery. Falls
+  // back to "email" only for notifications created before this change
+  // (channel is nullable in the DB, still) — matching _dispatch()'s own
+  // DEFAULT_CHANNEL resolution, so the displayed value always matches
+  // what would actually be used if sent.
+  appendDetailRow(body, "Channel", CHANNEL_LABELS[notification.channel] || CHANNEL_LABELS.email);
   if (notification.provider_message_id) {
     appendDetailRow(body, "Provider Message ID", notification.provider_message_id);
   }
 
+  // Step 3B: intent + handling — only present for a notification that
+  // came from an inbound message (see getNotificationIntelligence).
+  // handling is the application's own risk decision, never Claude's
+  // (see agent_service._compute_handling) — shown here exactly as
+  // computed, not re-derived client-side.
+  if (intelligence && intelligence.intent) {
+    appendDetailRow(body, "Intent", INTENT_LABELS[intelligence.intent] || intelligence.intent);
+  }
+  if (intelligence && intelligence.handling) {
+    const handlingRow = document.createElement("div");
+    handlingRow.className = "admin-detail-row";
+    const handlingLabel = document.createElement("span");
+    handlingLabel.className = "admin-detail-row__label";
+    handlingLabel.textContent = "Handling";
+    handlingRow.append(handlingLabel, renderHandlingBadge(intelligence.handling));
+    body.appendChild(handlingRow);
+  }
+
+  // Step 3B "human review required" explanation — why the AI didn't (or
+  // couldn't) confidently answer on its own, not just a bare status.
+  if (intelligence && intelligence.handling && intelligence.handling !== "green" && intelligence.review_reason) {
+    const callout = document.createElement("div");
+    callout.className = "admin-review-callout";
+    const title = document.createElement("p");
+    title.className = "admin-review-callout__title";
+    title.textContent = "Human review required";
+    const reason = document.createElement("p");
+    reason.textContent = intelligence.review_reason;
+    callout.append(title, reason);
+    body.appendChild(callout);
+  }
+
+  // Step 3: the customer's own message, shown above the AI's draft reply
+  // when this notification came from an inbound conversation — same
+  // section-heading/preview-block visual language as the rest of the
+  // drawer, not a new component.
+  if (sourceMessage) {
+    const sourceHeading = document.createElement("h3");
+    sourceHeading.className = "admin-drawer__section-heading";
+    sourceHeading.textContent = "Customer Message";
+    body.appendChild(sourceHeading);
+
+    const sourceWrap = document.createElement("div");
+    sourceWrap.className = "notification-preview";
+    const sourceMeta = document.createElement("p");
+    sourceMeta.className = "notification-preview__subject";
+    sourceMeta.textContent = `Via ${CHANNEL_LABELS[sourceMessage.channel] || sourceMessage.channel}${sourceMessage.subject ? ` — ${sourceMessage.subject}` : ""}`;
+    const sourceBody = document.createElement("p");
+    sourceBody.className = "notification-preview__body";
+    sourceBody.textContent = sourceMessage.body;
+    sourceWrap.append(sourceMeta, sourceBody);
+    body.appendChild(sourceWrap);
+  }
+
   const previewHeading = document.createElement("h3");
   previewHeading.className = "admin-drawer__section-heading";
-  previewHeading.textContent = "Preview";
+  previewHeading.textContent = sourceMessage ? "AI Draft Reply" : "Preview";
   body.appendChild(previewHeading);
+
+  // Step 3B "Knowledge used" — a concise indication of which trusted
+  // CakeCraft documents grounded the draft, not raw embeddings/technical
+  // detail (see agent_service.draft_reply_to_inbound_message's
+  // knowledge_sources — just title/sourceFile, the same shape the AI
+  // Agent's other RAG-grounded surfaces already show).
+  if (intelligence && intelligence.knowledge_sources && intelligence.knowledge_sources.length > 0) {
+    const knowledgeP = document.createElement("p");
+    knowledgeP.className = "admin-knowledge-used";
+    knowledgeP.textContent = `Knowledge used: ${intelligence.knowledge_sources.map((s) => s.title).join(", ")}`;
+    body.appendChild(knowledgeP);
+  }
+
   body.appendChild(
     buildPreviewBlock(notification, { editable: notification.status === "draft" || notification.status === "failed" })
   );
@@ -359,7 +501,7 @@ function renderNotificationDetail(notification, { sendError } = {}) {
   actionsHeading.className = "admin-drawer__section-heading";
   actionsHeading.textContent = "Actions";
   body.appendChild(actionsHeading);
-  body.appendChild(buildActionBar(notification, { sendError }));
+  body.appendChild(buildActionBar(notification));
 }
 
 async function openNotificationDrawer(notificationId) {
@@ -375,8 +517,14 @@ async function openNotificationDrawer(notificationId) {
   setNotificationsStateInUrl({ ...getNotificationsStateFromUrl(), id: notificationId }, { replace: true });
 
   try {
-    const notification = await getAdminNotification(notificationId);
-    renderNotificationDetail(notification);
+    const [notification, sourceMessage] = await Promise.all([
+      getAdminNotification(notificationId),
+      // A missing source message is the common, valid case (see
+      // renderNotificationDetail) -- never let that failure mode block
+      // the drawer from showing the notification itself.
+      getNotificationSourceMessage(notificationId).catch(() => null),
+    ]);
+    renderNotificationDetail(notification, sourceMessage);
   } catch (error) {
     renderErrorState(body, "Unable to load this notification.");
   }
@@ -396,11 +544,100 @@ function initDrawerCloseHandlers() {
   document.getElementById("notificationDrawerBackdrop").addEventListener("click", closeNotificationDrawer);
 }
 
+// --- Inbox: inbound messages with no resulting draft yet (Step 3) ----------
+// A message that *did* get drafted already shows up as that draft in the
+// regular list above — this is deliberately not a second, parallel view
+// of everything, only what still needs a human's attention as a raw
+// inbound message (unrecognized sender, or the AI Agent couldn't process
+// it). Hidden entirely when empty, the common case, so the workspace
+// doesn't stay cluttered with an empty panel.
+
+function renderInboxTable(items) {
+  const container = document.getElementById("inboxContainer");
+  container.innerHTML = "";
+
+  const table = document.createElement("table");
+  table.className = "admin-table";
+
+  const thead = document.createElement("thead");
+  thead.innerHTML = "<tr><th>Sender</th><th>Channel</th><th>Preview</th><th>Status</th><th>Received</th></tr>";
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  items.forEach((item) => {
+    const tr = document.createElement("tr");
+
+    const senderCell = document.createElement("td");
+    senderCell.textContent = item.customers ? item.customers.name : `${item.sender_identifier} (unrecognized)`;
+
+    const channelCell = document.createElement("td");
+    channelCell.appendChild(renderChannelBadge(item.channel));
+
+    const previewCell = document.createElement("td");
+    previewCell.className = "admin-table__preview-cell";
+    previewCell.textContent = truncate(item.body, 60);
+
+    const statusCell = document.createElement("td");
+    statusCell.textContent = INBOUND_AI_STATUS_LABELS[item.ai_status] || item.ai_status;
+
+    const receivedCell = document.createElement("td");
+    receivedCell.textContent = formatDateTime(item.received_at);
+
+    tr.append(senderCell, channelCell, previewCell, statusCell, receivedCell);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  container.appendChild(table);
+}
+
+async function loadInbox() {
+  const section = document.getElementById("inboxSection");
+  const container = document.getElementById("inboxContainer");
+  section.classList.remove("is-hidden");
+  renderLoadingState(container, "Checking inbox…");
+
+  try {
+    const result = await getCommunicationsInbox();
+    if (result.items.length === 0) {
+      section.classList.add("is-hidden");
+      return;
+    }
+    renderInboxTable(result.items);
+  } catch (error) {
+    renderErrorState(container, "Unable to load the inbox.");
+  }
+}
+
+function initCheckEmailButton() {
+  const btn = document.getElementById("checkEmailBtn");
+  const originalLabel = btn.textContent;
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    try {
+      const result = await checkForNewEmail();
+      btn.textContent = result.checked > 0 ? `Found ${result.checked} new` : "No new messages";
+      await loadInbox();
+      await loadNotifications();
+    } catch (error) {
+      btn.textContent = "Check failed";
+    } finally {
+      setTimeout(() => {
+        btn.textContent = originalLabel;
+        btn.disabled = false;
+      }, 2500);
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   loadNotifications();
+  loadInbox();
   initFilterForm();
   initPaginationButtons();
   initDrawerCloseHandlers();
+  initCheckEmailButton();
 
   const state = getNotificationsStateFromUrl();
   if (state.id) {

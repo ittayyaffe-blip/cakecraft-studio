@@ -143,9 +143,11 @@ async function getCustomerAIInsights(customerId) {
 
 // --- Notifications (Event-Driven Customer Communication Platform) ---------
 
-async function getAdminNotifications({ status, page = 1, pageSize = 20 } = {}) {
+async function getAdminNotifications({ view, channel, source, page = 1, pageSize = 20 } = {}) {
   const query = new URLSearchParams();
-  if (status) query.set("status", status);
+  if (view) query.set("view", view);
+  if (channel) query.set("channel", channel);
+  if (source) query.set("source", source);
   query.set("page", String(page));
   query.set("pageSize", String(pageSize));
   return adminFetch(`/admin/notifications?${query.toString()}`);
@@ -153,6 +155,13 @@ async function getAdminNotifications({ status, page = 1, pageSize = 20 } = {}) {
 
 async function getAdminNotification(notificationId) {
   return adminFetch(`/admin/notifications/${encodeURIComponent(notificationId)}`);
+}
+
+// The inbound customer message a draft was created from (Step 3) — null
+// for every notification created by the other paths (order-status change,
+// staff-initiated on-demand draft), not an error.
+async function getNotificationSourceMessage(notificationId) {
+  return adminFetch(`/admin/notifications/${encodeURIComponent(notificationId)}/source-message`);
 }
 
 async function updateNotificationContent(notificationId, subject, body) {
@@ -187,4 +196,19 @@ async function sendNotification(notificationId) {
   return adminFetch(`/admin/notifications/${encodeURIComponent(notificationId)}/send`, {
     method: "POST",
   });
+}
+
+// --- Inbound Communication (Step 3) -----------------------------------------
+
+// Inbound messages that don't (yet) have a resulting draft -- unknown
+// sender, AI processing failure, or still pending. A message that did get
+// drafted already shows up as that draft in the regular notifications list.
+async function getCommunicationsInbox() {
+  return adminFetch("/admin/communications/inbox");
+}
+
+// Fetch + process any currently-unread inbound email right now, rather
+// than waiting for the backend's own periodic background poll.
+async function checkForNewEmail() {
+  return adminFetch("/admin/communications/check-email", { method: "POST" });
 }
