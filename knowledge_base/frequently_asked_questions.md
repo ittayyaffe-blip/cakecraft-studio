@@ -1,5 +1,8 @@
 # Frequently Asked Questions — Maison de Gâteau Paris
 
+## What kind of cakes do you offer? What collections do you have?
+We offer five cake collections — Birthday, Wedding, Baby Shower, Graduation, and Corporate — each with three signature templates, independently customizable by size, flavor, filling, and frosting. See the Bakery Operations Manual for more on our collections, and the Recipe Guide for flavor pairing recommendations.
+
 ## How far in advance do I need to order?
 It depends on the collection: Birthday, Baby Shower, and Graduation cakes need 2–14 days; Corporate orders need 3–10 days; Wedding cakes need 14–45 days. See the Bakery Operations Manual and Wedding Cake Guide for why weddings need so much more lead time.
 

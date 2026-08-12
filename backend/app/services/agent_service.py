@@ -428,9 +428,9 @@ def _compute_handling(
 
 _UNABLE_TO_ANSWER_SUBJECT = "We received your message"
 _UNABLE_TO_ANSWER_BODY_TEMPLATE = (
-    "Hi {name}, thank you for reaching out! I'd be happy to help with that. "
-    "I don't have enough information to confirm this yet, so our team will "
-    "review your request and get back to you shortly."
+    "Hi {name}, thank you for reaching out! I don't have enough verified "
+    "information to answer that with confidence, so I've passed your "
+    "question along to our team — they'll follow up with you shortly."
 )
 
 # Distinct wording for the specific, confident case of "this isn't about

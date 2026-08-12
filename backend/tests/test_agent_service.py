@@ -361,7 +361,7 @@ def test_draft_reply_to_inbound_message_no_rag_results_skips_claude_entirely():
     assert result["knowledge_sources"] == []
     inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
     assert inserted_payload["status"] == "draft"
-    assert "don't have enough information" in inserted_payload["body"]
+    assert "don't have enough verified information" in inserted_payload["body"]
     assert inserted_payload["order_id"] is None
 
 
@@ -394,7 +394,7 @@ def test_draft_reply_to_inbound_message_claude_self_reports_unable_to_answer():
     assert result["ai_status"] == "unable_to_answer"
     assert result["handling"] == "yellow"  # can_answer=False forces at least yellow, even for a "green" intent
     inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
-    assert "don't have enough information" in inserted_payload["body"]
+    assert "don't have enough verified information" in inserted_payload["body"]
     assert inserted_payload["channel"] == "whatsapp"  # from the inbound message, not chosen by Claude
 
 
@@ -1093,7 +1093,7 @@ def test_vegan_question_without_verified_data_does_not_guess():
     assert result["ai_status"] == "unable_to_answer"
     assert result["handling"] == "yellow"
     inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
-    assert "don't have enough information" in inserted_payload["body"]
+    assert "don't have enough verified information" in inserted_payload["body"]
     assert "vegan" not in inserted_payload["body"].lower()  # no invented claim either way
 
 
