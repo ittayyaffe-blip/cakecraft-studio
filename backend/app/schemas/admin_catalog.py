@@ -66,3 +66,24 @@ class TemplateUpdateRequest(BaseModel):
     style: str | None = None
     base_price: float | None = None
     preview_image: str | None = None
+
+
+class TemplateCreateRequest(BaseModel):
+    """Body for `POST /admin/catalog/templates`. name/category/style/
+    base_price are required — a request missing any of them is rejected
+    by Pydantic itself (422) before the route body ever runs, the same
+    way `OrderCreateRequest`'s required fields already work for the
+    customer-facing order flow; no service-layer "is it present" check
+    is needed for that reason. preview_image is optional.
+
+    Deliberately no `active` field (the database's own `default true`
+    applies — that flag stays PATCH .../active's exclusive concern) and
+    no `bakery_id` field (resolved server-side; a client can never choose
+    which bakery a template belongs to in this single-bakery system).
+    """
+
+    name: str
+    category: str
+    style: str
+    base_price: float
+    preview_image: str | None = None

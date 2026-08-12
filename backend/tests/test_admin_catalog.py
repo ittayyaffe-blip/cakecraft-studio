@@ -26,10 +26,11 @@ import uuid
 from unittest.mock import patch
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.api.routes.admin import catalog
 from app.core.security import get_bearer_token, get_current_admin
-from app.schemas.admin_catalog import TemplateActiveUpdateRequest, TemplateUpdateRequest
+from app.schemas.admin_catalog import TemplateActiveUpdateRequest, TemplateCreateRequest, TemplateUpdateRequest
 from app.services.auth_service import AdminIdentity
 
 _ADMIN = AdminIdentity(id="staff-1", email="baker@maisondegateau.fr", role="admin", access_token="t")
@@ -80,6 +81,114 @@ def test_missing_bearer_token_is_rejected_with_401():
         assert exc.status_code == 401
     else:
         raise AssertionError("expected HTTPException(401), none was raised")
+
+
+# --- create_template: Catalog Management Slice 4 ----------------------------
+
+_VALID_CREATE_BODY = TemplateCreateRequest(
+    name="New Cake", category="Birthday", style="Modern", base_price=100.0, preview_image=None
+)
+
+
+def test_create_template_creates_and_records_an_audit_event():
+    created = {
+        "id": "new-t1",
+        "name": "New Cake",
+        "category": "Birthday",
+        "style": "Modern",
+        "base_price": 100.0,
+        "preview_image": None,
+        "active": True,
+        "bakery_id": "bakery-1",
+    }
+    with (
+        patch.object(catalog.template_service, "create_template", return_value=created) as mock_create,
+        patch.object(catalog, "record_event") as mock_record,
+    ):
+        result = catalog.create_template(_VALID_CREATE_BODY, admin=_ADMIN)
+
+    assert result == created
+    mock_create.assert_called_once_with(
+        {"name": "New Cake", "category": "Birthday", "style": "Modern", "base_price": 100.0, "preview_image": None}
+    )
+    mock_record.assert_called_once_with(
+        actor_id=_ADMIN.id,
+        action="template.created",
+        entity_type="cake_templates",
+        entity_id="new-t1",
+        before=None,
+        after={
+            "name": "New Cake",
+            "category": "Birthday",
+            "style": "Modern",
+            "base_price": 100.0,
+            "preview_image": None,
+        },
+    )
+    # Neither internally-resolved field appears in the audit "after".
+    after_kwargs = mock_record.call_args.kwargs["after"]
+    assert "bakery_id" not in after_kwargs
+    assert "active" not in after_kwargs
+
+
+def test_create_template_request_schema_cannot_be_used_to_set_active_or_bakery_id():
+    # Structural proof, not just convention: even if a caller tries to pass
+    # these, the schema has no field for them, so they can never reach
+    # template_service.create_template's `fields` dict at all.
+    body = TemplateCreateRequest(
+        name="New Cake", category="Birthday", style="Modern", base_price=100.0,
+        active=True, bakery_id="someone-elses-bakery",
+    )
+    dumped = body.model_dump()
+    assert "active" not in dumped
+    assert "bakery_id" not in dumped
+
+
+def test_create_template_missing_required_field_is_a_pydantic_validation_error():
+    # 422 territory -- FastAPI's own automatic behavior for a required
+    # field with no default, same as OrderCreateRequest already relies on
+    # for the customer-facing order flow. Never reaches the route body.
+    try:
+        TemplateCreateRequest(category="Birthday", style="Modern", base_price=100.0)  # no name
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("expected a ValidationError for the missing required field")
+
+
+def test_create_template_blank_name_is_rejected_as_400_without_recording_an_event():
+    with (
+        patch.object(catalog.template_service, "create_template", side_effect=ValueError("name must not be empty")),
+        patch.object(catalog, "record_event") as mock_record,
+    ):
+        try:
+            catalog.create_template(_VALID_CREATE_BODY, admin=_ADMIN)
+        except HTTPException as exc:
+            assert exc.status_code == 400
+        else:
+            raise AssertionError("expected HTTPException(400), none was raised")
+
+    mock_record.assert_not_called()  # nothing to log -- creation never happened
+
+
+def test_create_template_negative_base_price_is_rejected_as_400_without_recording_an_event():
+    with (
+        patch.object(catalog.template_service, "create_template", side_effect=ValueError("base_price must be >= 0")),
+        patch.object(catalog, "record_event") as mock_record,
+    ):
+        try:
+            catalog.create_template(_VALID_CREATE_BODY, admin=_ADMIN)
+        except HTTPException as exc:
+            assert exc.status_code == 400
+        else:
+            raise AssertionError("expected HTTPException(400), none was raised")
+
+    mock_record.assert_not_called()
+
+
+def test_create_template_route_is_wired_to_the_shared_admin_dependency():
+    admin_param = inspect.signature(catalog.create_template).parameters["admin"]
+    assert admin_param.default.dependency is get_current_admin
 
 
 # --- set_template_active: Catalog Management Slice 2 -----------------------

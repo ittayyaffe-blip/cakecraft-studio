@@ -11,14 +11,20 @@ same "service does the work, route logs the event right after" pattern,
 applied to `cake_templates` instead of `orders`, the exact future
 entity_type audit_service.py's own docstring already named.
 
-Slice 3 (this addition): staff can edit a template's other editable
-identity fields (name/category/style/base_price/preview_image) — true
-PATCH semantics via TemplateUpdateRequest's `exclude_unset`, so only
-fields actually sent change. Deliberately a separate endpoint from
-`.../active` rather than folding activation into this one: the two are
-independent concerns (see set_template_active's own docstring) and
-Slice 2 already shipped and is in use. Create/delete and any
-customization-option change are later, separate steps on top of this one.
+Slice 3: staff can edit a template's other editable identity fields
+(name/category/style/base_price/preview_image) — true PATCH semantics via
+TemplateUpdateRequest's `exclude_unset`, so only fields actually sent
+change. Deliberately a separate endpoint from `.../active` rather than
+folding activation into this one: the two are independent concerns (see
+set_template_active's own docstring) and Slice 2 already shipped and is
+in use.
+
+Slice 4 (this addition): staff can create a new template. `bakery_id` is
+always resolved server-side (see template_service._get_bakery_id) and
+`active` is never client-settable here (the database's own default
+applies) — both deliberately absent from TemplateCreateRequest, not just
+unenforced. Delete and any customization-option change are later,
+separate steps on top of this one.
 
 Same auth pattern as every other admin route: `get_current_admin` only —
 these are not the kind of business-judgment action (like approving a
@@ -35,6 +41,7 @@ from app.core.security import get_current_admin
 from app.schemas.admin_catalog import (
     AdminCakeTemplateWithOptions,
     TemplateActiveUpdateRequest,
+    TemplateCreateRequest,
     TemplateUpdateRequest,
 )
 from app.schemas.template import CakeTemplateResponse
@@ -54,6 +61,30 @@ def list_templates(admin: AdminIdentity = Depends(get_current_admin)):
     except Exception:
         logger.exception("Failed to list catalog templates")
         raise HTTPException(status_code=500, detail="Failed to list catalog templates")
+
+
+@router.post("/templates", response_model=CakeTemplateResponse)
+def create_template(body: TemplateCreateRequest, admin: AdminIdentity = Depends(get_current_admin)):
+    provided_fields = body.model_dump()
+
+    try:
+        created = template_service.create_template(provided_fields)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to create template")
+        raise HTTPException(status_code=500, detail="Failed to create template")
+
+    record_event(
+        actor_id=admin.id,
+        action="template.created",
+        entity_type="cake_templates",
+        entity_id=created["id"],
+        before=None,
+        after={key: created[key] for key in provided_fields},
+    )
+
+    return created
 
 
 @router.patch("/templates/{template_id}/active", response_model=CakeTemplateResponse)

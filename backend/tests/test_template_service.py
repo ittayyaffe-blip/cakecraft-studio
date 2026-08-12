@@ -27,7 +27,19 @@ def _chainable(data):
     m.ilike.return_value = m
     m.order.return_value = m
     m.maybe_single.return_value = m
+    m.limit.return_value = m
     m.execute.return_value = SimpleNamespace(data=data)
+    return m
+
+
+def _chainable_with_insert(select_data, insert_data):
+    """Like `_chainable`, plus a configured `.insert(...).execute()`
+    response independent of the select-chain's own -- create_template
+    needs both: the insert's response for the new row's id, then a
+    separate select (via get_template_by_id) to re-fetch it.
+    """
+    m = _chainable(select_data)
+    m.insert.return_value.execute.return_value = SimpleNamespace(data=insert_data)
     return m
 
 
@@ -243,6 +255,98 @@ def test_update_template_rejects_an_empty_fields_dict_before_any_db_update():
             raise AssertionError("expected ValueError, none was raised")
 
     templates_table.update.assert_not_called()
+
+
+# --- create_template: Catalog Management Slice 4 ----------------------------
+
+_VALID_CREATE_FIELDS = {
+    "name": "New Cake",
+    "category": "Birthday",
+    "style": "Modern",
+    "base_price": 100.0,
+    "preview_image": None,
+}
+
+
+def test_create_template_resolves_bakery_id_internally_and_inserts():
+    bakery_table = _chainable([{"id": "bakery-1"}])
+    templates_table = _chainable_with_insert(
+        select_data={"id": "new-t1", "name": "New Cake", "bakery_id": "bakery-1", "active": True},
+        insert_data=[{"id": "new-t1"}],
+    )
+    tables = {"bakery": bakery_table, "cake_templates": templates_table}
+    with patch.object(template_service, "supabase", _mock_supabase(tables)):
+        result = template_service.create_template(dict(_VALID_CREATE_FIELDS))
+
+    assert result["id"] == "new-t1"
+    sent_payload = templates_table.insert.call_args.args[0]
+    assert sent_payload["bakery_id"] == "bakery-1"  # resolved internally, not client-supplied
+    assert sent_payload["name"] == "New Cake"
+    bakery_table.select.assert_called_once_with("id")
+    bakery_table.limit.assert_called_once_with(1)
+    # Re-fetched through the existing lookup rather than trusting the
+    # insert call's own response -- same shape as update_template.
+    templates_table.select.assert_called_once_with("*")
+
+
+def test_create_template_never_sets_active_regardless_of_input():
+    # active isn't even a parameter this function accepts input for --
+    # the database's own default applies. Confirms the insert payload
+    # never contains the key at all, not just that it's ignored.
+    bakery_table = _chainable([{"id": "bakery-1"}])
+    templates_table = _chainable_with_insert(select_data={"id": "new-t1"}, insert_data=[{"id": "new-t1"}])
+    tables = {"bakery": bakery_table, "cake_templates": templates_table}
+    with patch.object(template_service, "supabase", _mock_supabase(tables)):
+        template_service.create_template(dict(_VALID_CREATE_FIELDS))
+
+    sent_payload = templates_table.insert.call_args.args[0]
+    assert "active" not in sent_payload
+
+
+def test_create_template_trims_string_fields_before_insert():
+    bakery_table = _chainable([{"id": "bakery-1"}])
+    templates_table = _chainable_with_insert(select_data={"id": "new-t1"}, insert_data=[{"id": "new-t1"}])
+    tables = {"bakery": bakery_table, "cake_templates": templates_table}
+    fields = {**_VALID_CREATE_FIELDS, "name": "  New Cake  "}
+    with patch.object(template_service, "supabase", _mock_supabase(tables)):
+        template_service.create_template(fields)
+
+    assert templates_table.insert.call_args.args[0]["name"] == "New Cake"
+
+
+def test_create_template_rejects_negative_base_price_before_any_db_call():
+    bakery_table = _chainable([{"id": "bakery-1"}])
+    templates_table = _chainable_with_insert(select_data={}, insert_data=[{"id": "x"}])
+    tables = {"bakery": bakery_table, "cake_templates": templates_table}
+    fields = {**_VALID_CREATE_FIELDS, "base_price": -1.0}
+    with patch.object(template_service, "supabase", _mock_supabase(tables)):
+        try:
+            template_service.create_template(fields)
+        except ValueError as exc:
+            assert "base_price" in str(exc)
+        else:
+            raise AssertionError("expected ValueError, none was raised")
+
+    templates_table.insert.assert_not_called()
+    bakery_table.select.assert_not_called()  # validation happens before the bakery lookup too
+
+
+def test_create_template_rejects_blank_strings_before_any_db_call():
+    bakery_table = _chainable([{"id": "bakery-1"}])
+    templates_table = _chainable_with_insert(select_data={}, insert_data=[{"id": "x"}])
+    tables = {"bakery": bakery_table, "cake_templates": templates_table}
+    with patch.object(template_service, "supabase", _mock_supabase(tables)):
+        for field in ("name", "category", "style"):
+            fields = {**_VALID_CREATE_FIELDS, field: "   "}
+            try:
+                template_service.create_template(fields)
+            except ValueError as exc:
+                assert field in str(exc)
+            else:
+                raise AssertionError(f"expected ValueError for blank {field}, none was raised")
+
+    templates_table.insert.assert_not_called()
+    bakery_table.select.assert_not_called()
 
 
 def run_all() -> None:

@@ -78,36 +78,25 @@ def set_template_active(template_id: str, active: bool) -> dict:
     return get_template_by_id(template_id)
 
 
-def update_template(template_id: str, fields: dict) -> dict:
-    """Partially update a template's editable identity fields -- name,
-    category, style, base_price, preview_image. Never `active`; that
-    stays set_template_active's own dedicated concern above, kept
-    separate on purpose (see app/api/routes/admin/catalog.py). Nothing
-    here can touch `active` or `bakery_id` even if asked to -- the only
-    caller builds `fields` from TemplateUpdateRequest, whose schema
-    doesn't declare either.
+def _validate_and_clean(fields: dict) -> dict:
+    """Shared value-validation for update_template and create_template:
+    a blank name/category/style (whichever of the three is present in
+    `fields`) is rejected, and trimmed when valid; a present base_price
+    is rejected if negative (mirroring the `cake_templates.base_price >=
+    0` check constraint from the initial schema migration). Applies only
+    to whichever of these keys `fields` actually contains -- update_
+    template may see any subset, create_template always sees all four
+    (enforced upstream by TemplateCreateRequest's required fields, so
+    there's nothing to check for their *presence* here, only their
+    values). Never touches `active`/`bakery_id`/`id`/`created_at` --
+    those never appear in `fields` in the first place, since neither
+    caller's request schema declares them.
 
-    `fields` should already be pre-filtered to only the keys the caller
-    actually supplied (see the route's use of `body.model_dump(
-    exclude_unset=True)`) -- true PATCH semantics, an omitted key is left
-    untouched in the database. Validates the *values* of whatever keys
-    are present, mirroring order_service.update_order_status's shape: a
-    plain ValueError for a clean 400, checked before any `supabase` call,
-    then a single update, then re-fetched through the existing lookup
-    rather than trusting the update call's own response. Assumes the
-    template's existence has already been confirmed by the caller, same
-    assumption set_template_active makes.
-
-    Raises ValueError if `fields` is empty (nothing to do -- the caller
-    should reject this before it gets here in the common case, but this
-    function doesn't trust that), or if a supplied name/category/style is
-    blank, or a supplied base_price is negative (mirroring the `cake_
-    templates.base_price >= 0` check constraint from the initial schema
-    migration).
+    Raises ValueError with a message naming the offending field, for a
+    clean 400 at the route -- same "service validates, route maps
+    ValueError to 400" shape order_service.update_order_status already
+    established.
     """
-    if not fields:
-        raise ValueError("No fields to update")
-
     cleaned = dict(fields)
 
     for key in ("name", "category", "style"):
@@ -122,5 +111,72 @@ def update_template(template_id: str, fields: dict) -> dict:
         if base_price is None or base_price < 0:
             raise ValueError("base_price must be >= 0")
 
+    return cleaned
+
+
+def update_template(template_id: str, fields: dict) -> dict:
+    """Partially update a template's editable identity fields -- name,
+    category, style, base_price, preview_image. Never `active`; that
+    stays set_template_active's own dedicated concern above, kept
+    separate on purpose (see app/api/routes/admin/catalog.py). Nothing
+    here can touch `active` or `bakery_id` even if asked to -- the only
+    caller builds `fields` from TemplateUpdateRequest, whose schema
+    doesn't declare either.
+
+    `fields` should already be pre-filtered to only the keys the caller
+    actually supplied (see the route's use of `body.model_dump(
+    exclude_unset=True)`) -- true PATCH semantics, an omitted key is left
+    untouched in the database. Mirrors order_service.update_order_status's
+    shape: validate first (via _validate_and_clean) for a clean
+    ValueError -> 400, then a single update, then re-fetched through the
+    existing lookup rather than trusting the update call's own response.
+    Assumes the template's existence has already been confirmed by the
+    caller, same assumption set_template_active makes.
+
+    Raises ValueError if `fields` is empty (nothing to do -- the caller
+    should reject this before it gets here in the common case, but this
+    function doesn't trust that), or via _validate_and_clean for an
+    invalid supplied value.
+    """
+    if not fields:
+        raise ValueError("No fields to update")
+
+    cleaned = _validate_and_clean(fields)
+
     supabase.table("cake_templates").update(cleaned).eq("id", template_id).execute()
     return get_template_by_id(template_id)
+
+
+def _get_bakery_id() -> str:
+    """The one seeded bakery row's id (supabase/migrations/20260729130000_
+    seed_bakery.sql -- this is a single-tenant system, "no second
+    location" per knowledge_base/business_information.md). Resolved here,
+    never accepted from a client, so create_template can't be pointed at
+    an arbitrary or wrong bakery.
+    """
+    response = supabase.table("bakery").select("id").limit(1).execute()
+    return response.data[0]["id"]
+
+
+def create_template(fields: dict) -> dict:
+    """Create a new cake template and return the refreshed row.
+
+    `fields` must already contain name/category/style/base_price --
+    TemplateCreateRequest declares all four required, so FastAPI rejects
+    a request missing any of them with 422 before this is ever called --
+    plus optionally preview_image. `active` is never accepted here; the
+    database's own `default true` applies, matching set_template_active's
+    exclusive ownership of that flag elsewhere. `bakery_id` is resolved
+    internally via _get_bakery_id, never from the caller.
+
+    Mirrors update_template's shape: validate via the same shared
+    _validate_and_clean helper for a clean ValueError -> 400 *before*
+    touching the database at all (including the bakery lookup), then a
+    single insert, then re-fetched through the existing lookup rather
+    than trusting the insert call's own response.
+    """
+    cleaned = _validate_and_clean(fields)
+
+    payload = {**cleaned, "bakery_id": _get_bakery_id()}
+    response = supabase.table("cake_templates").insert(payload).execute()
+    return get_template_by_id(response.data[0]["id"])
