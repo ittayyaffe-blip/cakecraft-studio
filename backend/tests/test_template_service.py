@@ -26,6 +26,7 @@ def _chainable(data):
     m.eq.return_value = m
     m.ilike.return_value = m
     m.order.return_value = m
+    m.maybe_single.return_value = m
     m.execute.return_value = SimpleNamespace(data=data)
     return m
 
@@ -130,6 +131,34 @@ def test_get_all_templates_with_options_queries_all_four_option_tables_unordered
     for name in ("cake_sizes", "flavors", "fillings", "frostings"):
         tables[name].eq.assert_not_called()  # no active=True filter -- admin sees everything
         tables[name].order.assert_called_once_with("display_order")
+
+
+# --- set_template_active: Catalog Management Slice 2 -----------------------
+
+
+def test_set_template_active_updates_only_the_active_column_and_returns_the_refreshed_row():
+    refreshed = {"id": "t1", "name": "Ivory Classic", "active": False}
+    templates_table = _chainable(refreshed)
+    with patch.object(template_service, "supabase", _mock_supabase({"cake_templates": templates_table})):
+        result = template_service.set_template_active("t1", False)
+
+    assert result == refreshed
+    templates_table.update.assert_called_once_with({"active": False})
+    templates_table.update.return_value.eq.assert_called_once_with("id", "t1")
+    # Re-fetched through the existing lookup rather than trusting the
+    # update call's own response -- same shape as update_order_status.
+    templates_table.select.assert_called_once_with("*")
+    templates_table.eq.assert_called_once_with("id", "t1")
+
+
+def test_set_template_active_can_reactivate():
+    refreshed = {"id": "t1", "name": "Ivory Classic", "active": True}
+    templates_table = _chainable(refreshed)
+    with patch.object(template_service, "supabase", _mock_supabase({"cake_templates": templates_table})):
+        result = template_service.set_template_active("t1", True)
+
+    assert result["active"] is True
+    templates_table.update.assert_called_once_with({"active": True})
 
 
 def run_all() -> None:

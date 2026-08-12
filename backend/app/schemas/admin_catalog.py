@@ -34,3 +34,11 @@ class AdminDesignerOptionsResponse(BaseModel):
 
 class AdminCakeTemplateWithOptions(CakeTemplateResponse):
     customization_options: AdminDesignerOptionsResponse
+
+
+class TemplateActiveUpdateRequest(BaseModel):
+    """Body for `PATCH /admin/catalog/templates/{id}/active` — same shape
+    convention as `admin_order.OrderStatusUpdateRequest` (one field, named
+    for what it sets)."""
+
+    active: bool

@@ -60,3 +60,19 @@ def get_all_templates_with_options() -> list[dict]:
     options = {table: _get_all_options(table) for table in _OPTION_TABLES}
 
     return [{**template, "customization_options": options} for template in templates]
+
+
+def set_template_active(template_id: str, active: bool) -> dict:
+    """Update a template's `active` flag and return the refreshed row.
+
+    Mirrors order_service.update_order_status's shape exactly: a single-
+    column `supabase` update, then re-fetched through the existing lookup
+    rather than trusting the update call's own response. Assumes the
+    template's existence has already been confirmed by the caller (see
+    app/api/routes/admin/catalog.py, which needs the *previous* `active`
+    value for the audit log entry anyway, so it already fetches the
+    template first — same assumption update_order_status makes about the
+    order it's updating).
+    """
+    supabase.table("cake_templates").update({"active": active}).eq("id", template_id).execute()
+    return get_template_by_id(template_id)

@@ -22,15 +22,18 @@ exact mechanism this route relies on.
 """
 
 import inspect
+import uuid
 from unittest.mock import patch
 
 from fastapi import HTTPException
 
 from app.api.routes.admin import catalog
 from app.core.security import get_bearer_token, get_current_admin
+from app.schemas.admin_catalog import TemplateActiveUpdateRequest
 from app.services.auth_service import AdminIdentity
 
 _ADMIN = AdminIdentity(id="staff-1", email="baker@maisondegateau.fr", role="admin", access_token="t")
+_TEMPLATE_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 _TEMPLATE_WITH_OPTIONS = {
     "id": "t1",
@@ -77,6 +80,56 @@ def test_missing_bearer_token_is_rejected_with_401():
         assert exc.status_code == 401
     else:
         raise AssertionError("expected HTTPException(401), none was raised")
+
+
+# --- set_template_active: Catalog Management Slice 2 -----------------------
+
+
+def test_set_template_active_updates_and_records_an_audit_event():
+    existing = {"id": str(_TEMPLATE_ID), "name": "Ivory Classic", "active": True}
+    updated = {**existing, "active": False}
+    with (
+        patch.object(catalog.template_service, "get_template_by_id", return_value=existing) as mock_get,
+        patch.object(catalog.template_service, "set_template_active", return_value=updated) as mock_set,
+        patch.object(catalog, "record_event") as mock_record,
+    ):
+        result = catalog.set_template_active(
+            _TEMPLATE_ID, TemplateActiveUpdateRequest(active=False), admin=_ADMIN
+        )
+
+    assert result == updated
+    mock_get.assert_called_once_with(str(_TEMPLATE_ID))
+    mock_set.assert_called_once_with(str(_TEMPLATE_ID), False)
+    mock_record.assert_called_once_with(
+        actor_id=_ADMIN.id,
+        action="template.active_changed",
+        entity_type="cake_templates",
+        entity_id=str(_TEMPLATE_ID),
+        before={"active": True},
+        after={"active": False},
+    )
+
+
+def test_set_template_active_404_when_template_not_found():
+    with (
+        patch.object(catalog.template_service, "get_template_by_id", return_value=None),
+        patch.object(catalog.template_service, "set_template_active") as mock_set,
+        patch.object(catalog, "record_event") as mock_record,
+    ):
+        try:
+            catalog.set_template_active(_TEMPLATE_ID, TemplateActiveUpdateRequest(active=False), admin=_ADMIN)
+        except HTTPException as exc:
+            assert exc.status_code == 404
+        else:
+            raise AssertionError("expected HTTPException(404), none was raised")
+
+    mock_set.assert_not_called()  # never attempts the update
+    mock_record.assert_not_called()  # never logs an event for a no-op
+
+
+def test_set_template_active_route_is_wired_to_the_shared_admin_dependency():
+    admin_param = inspect.signature(catalog.set_template_active).parameters["admin"]
+    assert admin_param.default.dependency is get_current_admin
 
 
 def run_all() -> None:
