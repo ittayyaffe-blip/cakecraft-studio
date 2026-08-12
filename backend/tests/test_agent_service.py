@@ -1535,6 +1535,202 @@ def test_answer_customer_question_never_raises_when_anthropic_is_down():
     assert result["answer"]  # always some safe text for the widget to show
 
 
+# --- Ordering/navigation questions (shared _classify_and_respond core) ----
+# Root cause (see this session's investigation): the knowledge base had no
+# document describing the actual website ordering flow, so RAG retrieval
+# for "how can I order" / "how do I continue" genuinely found nothing
+# relevant, and the AI was correctly (per its own authority-boundary
+# rules) refusing to invent an answer -- not a classification or prompt
+# bug. Fixed with real KB content (knowledge_base/ordering_process.md)
+# plus one retrieval-robustness improvement in _classify_and_respond: a
+# short/vague follow-up that retrieves nothing on its own gets retried
+# once with conversation history folded into the query, before falling
+# back to the same honest escalation as before. These tests mock RAG/
+# Claude at the same boundary every other test in this file already does
+# -- they verify the *retry mechanism* and the *escalation floor*, not
+# live retrieval quality (see this session's own manual verification
+# transcript for that).
+
+
+def test_ordering_question_answered_when_the_kb_covers_it():
+    fake_chunks = [{"title": "Ordering Process", "content": "Browse collections, choose a template, customize it in the Designer, review, then confirm.", "source_file": "ordering_process.md"}]
+    fake_response = _fake_claude_json_response(
+        intent="NEW_ORDER_INQUIRY", subject="Re: ordering", body="You can browse our collections, choose a template, customize it in the Designer, then review and confirm your order.",
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks) as mock_retrieve,
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        result = agent_service.answer_customer_question("How can I order?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["ai_status"] == "drafted"
+    assert "designer" in result["answer"].lower()
+    mock_retrieve.assert_called_once()  # found on the first try -- no retry needed
+
+
+def test_vague_followup_retries_retrieval_using_conversation_history():
+    history = [{"body": "I'd like to design a wedding cake", "received_at": "2026-08-12T10:00:00Z"}]
+    fake_chunks = [{"title": "Ordering Process", "content": "Continue to the Designer to customize your cake.", "source_file": "ordering_process.md"}]
+    fake_response = _fake_claude_json_response(
+        intent="NEW_ORDER_INQUIRY", subject="Re: next steps", body="Head to the Designer to customize your wedding cake next.",
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", side_effect=[[], fake_chunks]) as mock_retrieve,
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        result = agent_service.answer_customer_question(
+            "What do I do next?", _FAKE_INBOUND_CUSTOMER, None, conversation_history=history
+        )
+
+    assert result["ai_status"] == "drafted"
+    assert mock_retrieve.call_count == 2
+    second_call_query = mock_retrieve.call_args_list[1].args[0]
+    assert "What do I do next?" in second_call_query
+    assert "wedding cake" in second_call_query  # history folded in, not just the bare message
+
+
+def test_vague_followup_without_history_still_escalates_honestly():
+    # No history to retry with -- must behave exactly as before this fix:
+    # one retrieval attempt, honest fallback, never a fabricated answer.
+    # The fallback is still a real draft (see answer_customer_question's
+    # own docstring), hence supabase is mocked here too.
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=[]) as mock_retrieve,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="email", status="draft")
+        result = agent_service.answer_customer_question("What do I do next?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["ai_status"] == "unable_to_answer"
+    mock_retrieve.assert_called_once()
+
+
+def test_retrieval_retry_can_still_end_in_honest_escalation():
+    # History exists but doesn't help either -- must still fall back
+    # honestly rather than loop or fabricate.
+    history = [{"body": "hello", "received_at": "2026-08-12T10:00:00Z"}]
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=[]) as mock_retrieve,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="email", status="draft")
+        result = agent_service.answer_customer_question(
+            "What do I do next?", _FAKE_INBOUND_CUSTOMER, None, conversation_history=history
+        )
+
+    assert result["ai_status"] == "unable_to_answer"
+    assert mock_retrieve.call_count == 2
+
+
+def test_unrelated_question_still_escalates_not_answered_from_general_knowledge():
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=[]) as mock_retrieve,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="email", status="draft")
+        result = agent_service.answer_customer_question("What's the weather like today?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["ai_status"] == "unable_to_answer"
+    mock_retrieve.assert_called_once()  # no conversation history -- no retry, same as before
+
+
+def test_ordering_fix_does_not_affect_gluten_free_safety_handling():
+    fake_chunks = [{"title": "Allergen Policy", "content": "We cannot guarantee an allergen-free product.", "source_file": "allergen_policy.md"}]
+    fake_response = _fake_claude_json_response(
+        intent="ALLERGY_DIETARY", requestsUnsupportedGuarantee=True, subject="Re: gluten-free",
+        body="We can't guarantee a gluten-free product since our kitchen is shared.",
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks) as mock_retrieve,
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        result = agent_service.answer_customer_question("Can you make this cake gluten free?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["handling"] == "red"  # unaffected by the retrieval-retry change
+    mock_retrieve.assert_called_once()
+
+
+def test_ordering_fix_does_not_affect_severe_allergy_escalation():
+    fake_chunks = [{"title": "Allergen Policy", "content": "Severe allergy requests always require the team's direct review.", "source_file": "allergen_policy.md"}]
+    fake_response = _fake_claude_json_response(
+        intent="ALLERGY_DIETARY", requestsUnsupportedGuarantee=True, requiresHumanReview=True,
+        reviewReason="Severe allergy requires direct review.",
+        subject="Re: allergy", body="We cannot guarantee safety for a severe nut allergy in our shared kitchen -- flagging this for our team to review directly.",
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="email", status="draft")
+
+        result = agent_service.answer_customer_question("I have a severe nut allergy. Is this cake safe for me?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["handling"] == "red"
+    inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert inserted_payload["channel"] == "email"  # still a real draft, not the instant chat/sent path
+
+
+def test_ordering_fix_does_not_affect_kosher_handling():
+    fake_chunks = [{"title": "Dietary, Allergy & Religious Requirements Policy", "content": "CakeCraft does not hold Kosher certification.", "source_file": "dietary_allergy_religious_policy.md"}]
+    fake_response = _fake_claude_json_response(
+        intent="RELIGIOUS_DIETARY", requestsUnsupportedGuarantee=True, subject="Re: kosher",
+        body="Our cakes are not religiously certified, including kosher certification.",
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks) as mock_retrieve,
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        result = agent_service.answer_customer_question("Is this cake kosher?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["handling"] == "red"
+    assert "not religiously certified" in result["answer"].lower()
+    mock_retrieve.assert_called_once()
+
+
+def test_ordering_fix_does_not_affect_halal_handling():
+    fake_chunks = [{"title": "Dietary, Allergy & Religious Requirements Policy", "content": "CakeCraft does not hold Halal certification.", "source_file": "dietary_allergy_religious_policy.md"}]
+    fake_response = _fake_claude_json_response(
+        intent="RELIGIOUS_DIETARY", requestsUnsupportedGuarantee=True, subject="Re: halal",
+        body="Our cakes are not religiously certified, including halal certification.",
+    )
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        result = agent_service.answer_customer_question("Is this cake halal?", _FAKE_INBOUND_CUSTOMER, None)
+
+    assert result["handling"] == "red"
+    assert "not religiously certified" in result["answer"].lower()
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

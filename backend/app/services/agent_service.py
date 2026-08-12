@@ -552,6 +552,22 @@ def _classify_and_respond(
     "knowledge_sources": list[dict]}.
     """
     knowledge = rag_service.retrieve(message_body, top_k=4)
+    if not knowledge and conversation_history:
+        # A short, genuinely vague follow-up ("What do I do next?") can
+        # carry too little vocabulary on its own for TF-IDF retrieval to
+        # find anything -- even though the conversation makes the topic
+        # obvious. Retrying once with recent conversation context folded
+        # into the query (never the customer's message text alone, always
+        # in addition to it) gives retrieval more to match against,
+        # without changing what happens when the message alone already
+        # retrieves something, or when there's no history to draw on
+        # (first contact still gets the exact same honest fallback below).
+        # Purely a better retrieval *input* -- the retrieved chunks are
+        # the same trusted knowledge base either way, and every guardrail
+        # downstream (the authority boundary, _compute_handling) applies
+        # identically regardless of how a chunk was found.
+        history_text = " ".join((entry.get("body") or "") for entry in conversation_history)
+        knowledge = rag_service.retrieve(f"{message_body} {history_text}", top_k=4)
     knowledge_sources = [{"title": c["title"], "sourceFile": c["source_file"]} for c in knowledge]
 
     if not knowledge or not is_configured():
