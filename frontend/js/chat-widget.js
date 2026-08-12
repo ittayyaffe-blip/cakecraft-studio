@@ -18,6 +18,17 @@ const CHAT_LANDING_INTRO =
   "Have a question before you order? Ask us about ingredients, allergies, dietary preferences, or special requirements.";
 const CHAT_GENERIC_INTRO = "Have a question? Ask us about ingredients, allergies, dietary preferences, or anything else.";
 
+// Temporary testing number -- the ONE place it lives. Swap this single
+// constant for the real CakeCraft Studio WhatsApp Business number once
+// it's available; nothing else in this file needs to change. Digits
+// only, no "+"/spaces (wa.me's required format).
+const WHATSAPP_NUMBER = "972545446601";
+const WHATSAPP_PREFILL_MESSAGE = "Hi CakeCraft Studio! I'd like to ask a question about a cake.";
+
+function buildWhatsAppLink() {
+  return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(WHATSAPP_PREFILL_MESSAGE)}`;
+}
+
 function getChatIdentity() {
   try {
     const raw = sessionStorage.getItem(CHAT_IDENTITY_KEY);
@@ -214,6 +225,18 @@ function initChatWidget() {
   closeBtn.addEventListener("click", () => panel.classList.add("is-hidden"));
 
   document.body.append(toggleBtn, panel);
+
+  // Lets other on-page entry points (the landing page's "Chat with us"
+  // card, see app.js) open this same widget/conversation instead of
+  // building a second one -- WhatsApp is independently discoverable now
+  // (no longer inside this panel), but "Chat with us" still just opens
+  // this exact widget.
+  window.CakeCraftChat = {
+    open: () => {
+      panel.classList.remove("is-hidden");
+      questionInput.focus();
+    },
+  };
 }
 
 document.addEventListener("DOMContentLoaded", initChatWidget);

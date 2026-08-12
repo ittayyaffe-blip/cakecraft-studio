@@ -46,8 +46,37 @@ async function loadCollections() {
   }
 }
 
+// WhatsApp entry points -- landing page's "Questions Before You Order?"
+// card and the footer link every other customer page has. Both read the
+// destination from chat-widget.js's buildWhatsAppLink() (the one shared
+// WHATSAPP_NUMBER constant) rather than a second hardcoded URL, so there
+// is still only one place to update when the real business number
+// replaces the temporary testing one. Each element is optional -- only
+// the landing page has the card, only the other five pages have the
+// footer link -- so this silently no-ops wherever an element isn't
+// present, same guard style loadCollections above already uses.
+function initWhatsAppLinks() {
+  const chatCard = document.getElementById("talkToUsChatBtn");
+  if (chatCard) {
+    chatCard.addEventListener("click", () => {
+      if (window.CakeCraftChat) window.CakeCraftChat.open();
+    });
+  }
+
+  const landingLink = document.getElementById("talkToUsWhatsAppLink");
+  if (landingLink) {
+    landingLink.href = buildWhatsAppLink();
+  }
+
+  const footerLink = document.getElementById("footerWhatsAppLink");
+  if (footerLink) {
+    footerLink.href = buildWhatsAppLink();
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initNavToggle();
   initFooterYear();
   loadCollections();
+  initWhatsAppLinks();
 });

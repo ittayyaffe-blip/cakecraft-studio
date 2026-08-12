@@ -2329,8 +2329,8 @@ h3 {
   right: var(--space-3);
   bottom: calc(var(--space-3) + 3.5rem);
   z-index: 60;
-  width: min(360px, calc(100vw - 2 * var(--space-3)));
-  max-height: min(520px, calc(100vh - 8rem));
+  width: min(400px, calc(100vw - 2 * var(--space-3)));
+  max-height: min(580px, calc(100vh - 8rem));
   display: flex;
   flex-direction: column;
   background: var(--color-ivory);
@@ -2338,6 +2338,17 @@ h3 {
   border-radius: var(--radius);
   box-shadow: var(--shadow-soft);
   overflow: hidden;
+}
+
+/* Substantially roomier on desktop, where there's space to spare for a
+   real conversation -- mobile/tablet keep the more compact sizing above
+   (and the <=480px override below), same visual language throughout,
+   just more of it. */
+@media (min-width: 1024px) {
+  .chat-widget__panel {
+    width: min(520px, calc(100vw - 2 * var(--space-3)));
+    max-height: min(720px, calc(100vh - 6rem));
+  }
 }
 
 .chat-widget__panel.is-hidden {
@@ -2376,15 +2387,15 @@ h3 {
   padding: var(--space-2) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--space-2);
 }
 
 .chat-widget__bubble {
   max-width: 85%;
-  padding: 0.6rem 0.9rem;
+  padding: 0.75rem 1rem;
   border-radius: var(--radius);
   font-size: 0.92rem;
-  line-height: 1.4;
+  line-height: 1.5;
   white-space: pre-wrap;
 }
 
@@ -2443,4 +2454,70 @@ h3 {
   .chat-widget__toggle {
     right: var(--space-1);
   }
+}
+
+/* ---------- Questions Before You Order? (landing page only) ----------
+   Two independent, equally-weighted entry points -- Chat and WhatsApp --
+   styled like .feature-card (same ivory/border/shadow language already
+   used for "Why Choose Us") but interactive: both are real controls
+   (a button and a link), so they get a visible hover/focus affordance
+   .feature-card itself doesn't need. */
+.talk-to-us {
+  padding-block: var(--space-5);
+}
+
+.talk-to-us__options {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  max-width: 720px;
+  margin-inline: auto;
+}
+
+@media (min-width: 640px) {
+  .talk-to-us__options {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.talk-to-us__option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-1);
+  padding: var(--space-4) var(--space-3);
+  background: var(--color-ivory);
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+  text-decoration: none;
+  color: inherit;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.talk-to-us__option:hover,
+.talk-to-us__option:focus-visible {
+  transform: translateY(-4px);
+  border-color: var(--color-gold);
+}
+
+.talk-to-us__option-icon {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.talk-to-us__option-title {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: var(--color-brown);
+}
+
+.talk-to-us__option-desc {
+  font-size: 0.9rem;
+  color: var(--color-brown-soft);
 }
