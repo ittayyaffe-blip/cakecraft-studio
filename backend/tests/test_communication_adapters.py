@@ -265,6 +265,35 @@ def test_to_whatsapp_address_empty_for_no_digits():
     assert twilio_whatsapp_adapter._to_whatsapp_address("not a phone number") == ""
 
 
+# Israeli phone normalization (found via the real Twilio WhatsApp
+# diagnostic: a customer stored in local format has no country code, so
+# the plain digit-strip alone built an invalid `whatsapp:+0...` address).
+
+
+def test_to_whatsapp_address_converts_local_israeli_mobile_format():
+    assert twilio_whatsapp_adapter._to_whatsapp_address("0545446601") == "whatsapp:+972545446601"
+
+
+def test_to_whatsapp_address_converts_local_israeli_mobile_format_with_punctuation():
+    assert twilio_whatsapp_adapter._to_whatsapp_address("054-544-6601") == "whatsapp:+972545446601"
+
+
+def test_to_whatsapp_address_leaves_already_international_israeli_number_unchanged():
+    assert twilio_whatsapp_adapter._to_whatsapp_address("+972545446601") == "whatsapp:+972545446601"
+
+
+def test_to_whatsapp_address_leaves_israeli_number_without_plus_unchanged():
+    # Already has the country code, just no leading "+" -- not the local
+    # 10-digit "05..." shape, so it must NOT be rewritten a second time.
+    assert twilio_whatsapp_adapter._to_whatsapp_address("972545446601") == "whatsapp:+972545446601"
+
+
+def test_to_whatsapp_address_does_not_touch_non_israeli_ten_digit_numbers():
+    # A 10-digit number that doesn't start with "05" (e.g. a US number)
+    # must not be mistaken for local Israeli format.
+    assert twilio_whatsapp_adapter._to_whatsapp_address("5551234567") == "whatsapp:+5551234567"
+
+
 def test_twilio_build_message_text_combines_subject_and_body():
     text = twilio_whatsapp_adapter._build_message_text({"subject": "Ready!", "body": "Come get it."})
     assert text == "Ready!\n\nCome get it."

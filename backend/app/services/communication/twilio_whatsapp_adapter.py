@@ -61,9 +61,26 @@ def _to_whatsapp_address(phone: str) -> str:
     whatsapp_adapter._to_whatsapp_number). Not reusable verbatim between
     the two adapters for that reason: same normalization *idea*, different
     target format. A pure function, no network — testable on its own.
+
+    One specific, narrow normalization on top of the plain digit-strip:
+    a customer phone stored in local Israeli mobile format (`05XXXXXXXX`,
+    10 digits, no country code — how a website form naturally captures
+    it) has no country code for Twilio to use, so `_to_whatsapp_address`
+    would otherwise build an invalid address (`+0...`) — found via the
+    real Twilio WhatsApp diagnostic, see tools/test_twilio_whatsapp.py's
+    own notes. Rewritten to `972` + the number without its leading `0`
+    (E.164), matching this project's actual customer base. Anything else
+    — already-international numbers (`+972...`, `972...`, or any other
+    country), already correct — passes through unchanged, exactly as
+    before this fix; only the one specific 10-digit-starting-with-05
+    shape is rewritten.
     """
     digits = re.sub(r"\D", "", phone)
-    return f"whatsapp:+{digits}" if digits else ""
+    if not digits:
+        return ""
+    if digits.startswith("05") and len(digits) == 10:
+        digits = "972" + digits[1:]
+    return f"whatsapp:+{digits}"
 
 
 def _build_message_text(notification: dict) -> str:
