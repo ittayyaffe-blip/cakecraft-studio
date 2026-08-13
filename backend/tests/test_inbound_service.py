@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.services import inbound_service
+from app.services.communication import twilio_whatsapp_inbound
 
 FAKE_CUSTOMER = {"id": "cust-1", "name": "Jane Doe", "email": "jane@example.com", "phone": "+33612345678"}
 FAKE_ORDER = {
@@ -97,6 +98,28 @@ def test_process_inbound_whatsapp_is_idempotent_for_a_repeated_message_id():
     with patch.object(inbound_service, "supabase") as mock_supabase:
         mock_supabase.table.return_value = query
         parsed = {"sender_phone": "33612345678", "body": "Is my cake ready?", "message_id": "wamid.123", "timestamp_epoch": None}
+        result = inbound_service.process_inbound_whatsapp(parsed)
+
+    assert result == existing_row
+    query.insert.assert_not_called()
+
+
+def test_twilio_parsed_payload_is_accepted_by_the_unmodified_whatsapp_pipeline():
+    # The actual contract proof: a real (not hand-written) dict produced
+    # by twilio_whatsapp_inbound.parse_webhook_payload -- Twilio's own
+    # provider, a completely different module -- is accepted by
+    # process_inbound_whatsapp with no shape mismatch, exactly like a
+    # Meta-parsed dict already is. This function itself is untouched by
+    # the Twilio integration; this test is what actually proves that
+    # claim rather than just asserting it in a docstring.
+    existing_row = _fake_inbound_row(channel="whatsapp", provider_message_id="SMabc123", sender_identifier="+33612345678")
+    query = _self_chaining_query_mock(SimpleNamespace(data=existing_row))
+    with patch.object(inbound_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value = query
+        parsed = twilio_whatsapp_inbound.parse_webhook_payload(
+            {"From": "whatsapp:+33612345678", "Body": "Is my cake ready?", "MessageSid": "SMabc123"}
+        )
+        assert parsed is not None  # a real parse failure would silently no-op the test otherwise
         result = inbound_service.process_inbound_whatsapp(parsed)
 
     assert result == existing_row

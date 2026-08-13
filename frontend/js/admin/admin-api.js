@@ -212,3 +212,11 @@ async function getCommunicationsInbox() {
 async function checkForNewEmail() {
   return adminFetch("/admin/communications/check-email", { method: "POST" });
 }
+
+// Which WhatsApp provider (if any) is currently live — Twilio Sandbox
+// (this project's actual setup) or Meta Cloud API — so the Communications
+// Workspace can say so plainly rather than leaving WhatsApp's state
+// implicit. Never returns a secret; see WhatsAppStatusResponse.
+async function getWhatsAppStatus() {
+  return adminFetch("/admin/communications/whatsapp-status");
+}

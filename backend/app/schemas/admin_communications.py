@@ -50,3 +50,15 @@ class AdminInboxResponse(BaseModel):
 class CheckEmailResponse(BaseModel):
     checked: int
     items: list[AdminInboundMessage]
+
+
+class WhatsAppStatusResponse(BaseModel):
+    """See app.services.communication.whatsapp_status — `provider` is
+    `"twilio_sandbox"`, `"meta"`, or `None`; `sandboxNumber` is only ever
+    set alongside `"twilio_sandbox"`, and is Twilio's own publicly
+    documented shared Sandbox number, never a secret.
+    """
+
+    configured: bool
+    provider: str | None = None
+    sandboxNumber: str | None = None

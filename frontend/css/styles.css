@@ -2322,6 +2322,49 @@ h3 {
   color: #2c7a49;
 }
 
+/* WhatsApp status banner (Twilio Sandbox integration) — same visual
+   language as .admin-review-callout (a warm, informational note, not an
+   error), reused here rather than duplicated because this banner's job
+   is identical in spirit: "here's important context before you act."
+   --sandbox uses that same tan/gold tone since it's the one state that
+   most needs to stay visible (this is a test environment, not a real
+   WhatsApp Business number); --meta reuses the green channel-badge
+   color since it means a real integration is live; --off reuses the
+   neutral "queued" tone already used for an inactive/default state. */
+.whatsapp-status-banner {
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: 0.9rem;
+}
+
+.whatsapp-status-banner__title {
+  font-weight: 600;
+  margin: 0 0 0.2rem;
+}
+
+.whatsapp-status-banner__detail {
+  margin: 0;
+}
+
+.whatsapp-status-banner--sandbox {
+  background: #f3ebdc;
+  border: 1px solid #e0cba8;
+  color: #7a5a2e;
+}
+
+.whatsapp-status-banner--meta {
+  background: #e6f2ea;
+  border: 1px solid #bfe0cb;
+  color: #2c7a49;
+}
+
+.whatsapp-status-banner--off {
+  background: var(--color-ivory-dark);
+  border: 1px solid var(--color-ivory-dark);
+  color: var(--color-brown-soft);
+}
+
 /* Source badges — distinguishes an automated, order-status-triggered
    notification from one the AI Agent drafted on demand. Reuses the same
    gold accent already used for AI-related UI elsewhere (e.g. the

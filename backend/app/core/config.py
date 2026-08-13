@@ -85,6 +85,24 @@ class Settings:
     whatsapp_webhook_verify_token: str | None = os.environ.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
     whatsapp_app_secret: str | None = os.environ.get("WHATSAPP_APP_SECRET")
 
+    # Twilio WhatsApp Sandbox — a second, parallel way to reach the same
+    # "whatsapp" channel (see communication/twilio_whatsapp_adapter.py,
+    # communication/twilio_whatsapp_inbound.py), used instead of the Meta
+    # Cloud API above for this project's university/demo deployment (a free
+    # Twilio Sandbox test number, not a Meta Business/WhatsApp Business
+    # registration). One pair of credentials covers both directions: Twilio
+    # reuses the Account SID + Auth Token for outbound HTTP Basic Auth *and*
+    # inbound X-Twilio-Signature verification, unlike Meta's four separate
+    # secrets. Both unset (never true in this project's Railway environment,
+    # but always true for a fresh clone/local dev) means the Twilio adapter
+    # reports itself unconfigured and the Twilio webhook rejects every
+    # request — same fail-closed contract as every other credential in this
+    # file. See communication/__init__.py for which of Twilio/Meta actually
+    # ends up registered for the "whatsapp" channel when both happen to be
+    # configured.
+    twilio_account_sid: str | None = os.environ.get("TWILIO_ACCOUNT_SID")
+    twilio_auth_token: str | None = os.environ.get("TWILIO_AUTH_TOKEN")
+
     # Inbound Gmail (Step 3) — IMAP polling of the *same* Gmail account
     # GMAIL_ADDRESS/GMAIL_APP_PASSWORD above already sends from (an App
     # Password authorizes IMAP too, not just SMTP — no new Google-side

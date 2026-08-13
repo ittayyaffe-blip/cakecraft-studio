@@ -17,6 +17,12 @@
 
 const NOTIFICATIONS_PAGE_SIZE = 20;
 
+// Cached after the first load so renderNotificationDetail (drawer) can
+// show a provider-aware note on a WhatsApp notification without a second
+// fetch per drawer open — refreshed each time loadWhatsAppStatus() runs
+// (page load only; this doesn't change mid-session in practice).
+let _whatsappStatusCache = null;
+
 // "Needs Review" is the default landing view — what a staff member opening
 // Communications should see first is what needs their attention, not an
 // unfiltered firehose (mirrors admin/notifications.py's VIEW_STATUSES).
@@ -422,6 +428,17 @@ function renderNotificationDetail(notification, sourceMessage) {
     appendDetailRow(body, "Provider Message ID", notification.provider_message_id);
   }
 
+  // Same "unmistakably Sandbox, not a real business number" statement the
+  // workspace-level banner makes (loadWhatsAppStatus), repeated here at
+  // the one place staff are about to act on a specific WhatsApp message —
+  // reads the cached status rather than fetching again per drawer open.
+  if (notification.channel === "whatsapp" && _whatsappStatusCache && _whatsappStatusCache.provider === "twilio_sandbox") {
+    const sandboxNote = document.createElement("p");
+    sandboxNote.className = "admin-knowledge-used";
+    sandboxNote.textContent = `Sent via Twilio Sandbox (test environment), from ${_whatsappStatusCache.sandboxNumber} — not a CakeCraft business number.`;
+    body.appendChild(sandboxNote);
+  }
+
   // Step 3B: intent + handling — only present for a notification that
   // came from an inbound message (see getNotificationIntelligence).
   // handling is the application's own risk decision, never Claude's
@@ -631,9 +648,62 @@ function initCheckEmailButton() {
   });
 }
 
+// --- WhatsApp status (Twilio Sandbox integration) ---------------------------
+// A compact, always-visible note above the Inbox panel — not a toggle to
+// interact with, just an honest, unmissable statement of which WhatsApp
+// provider (if any) is actually live right now, so the Sandbox/test
+// nature of this project's setup is never mistaken for a real WhatsApp
+// Business connection. Reuses the existing loading/error state helpers
+// for those two states; only the three "resolved" states get their own
+// (small, token-reusing — see styles.css) rendering.
+
+function renderWhatsAppStatusBanner(status) {
+  const container = document.getElementById("whatsappStatusBanner");
+  container.innerHTML = "";
+
+  const banner = document.createElement("div");
+  const title = document.createElement("p");
+  title.className = "whatsapp-status-banner__title";
+  const detail = document.createElement("p");
+  detail.className = "whatsapp-status-banner__detail";
+
+  if (status.provider === "twilio_sandbox") {
+    banner.className = "whatsapp-status-banner whatsapp-status-banner--sandbox";
+    title.textContent = "WhatsApp: Twilio Sandbox — Test Environment";
+    detail.textContent =
+      `Messages send from Twilio's shared Sandbox number (${status.sandboxNumber}), not a CakeCraft ` +
+      "business number. This is a university/demo setup — no commercial WhatsApp Business account is " +
+      "connected, and your personal WhatsApp is only ever a test recipient, never CakeCraft's sender.";
+  } else if (status.provider === "meta") {
+    banner.className = "whatsapp-status-banner whatsapp-status-banner--meta";
+    title.textContent = "WhatsApp: Connected (Meta Cloud API)";
+    detail.textContent = "Inbound and outbound WhatsApp messages are live through the Meta Business Platform.";
+  } else {
+    banner.className = "whatsapp-status-banner whatsapp-status-banner--off";
+    title.textContent = "WhatsApp: Not connected";
+    detail.textContent = "No WhatsApp provider is configured — WhatsApp-channel replies won't actually send yet.";
+  }
+
+  banner.append(title, detail);
+  container.appendChild(banner);
+}
+
+async function loadWhatsAppStatus() {
+  const container = document.getElementById("whatsappStatusBanner");
+  renderLoadingState(container, "Checking WhatsApp status…");
+  try {
+    const status = await getWhatsAppStatus();
+    _whatsappStatusCache = status;
+    renderWhatsAppStatusBanner(status);
+  } catch (error) {
+    renderErrorState(container, "Unable to load WhatsApp status.");
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   loadNotifications();
   loadInbox();
+  loadWhatsAppStatus();
   initFilterForm();
   initPaginationButtons();
   initDrawerCloseHandlers();

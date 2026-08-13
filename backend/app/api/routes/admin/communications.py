@@ -19,8 +19,8 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.security import get_current_admin
-from app.schemas.admin_communications import AdminInboxResponse, CheckEmailResponse
-from app.services import inbound_service
+from app.schemas.admin_communications import AdminInboxResponse, CheckEmailResponse, WhatsAppStatusResponse
+from app.services import communication, inbound_service
 from app.services.auth_service import AdminIdentity
 
 logger = logging.getLogger(__name__)
@@ -53,3 +53,13 @@ def inbox(admin: AdminIdentity = Depends(get_current_admin)):
     except Exception:
         logger.exception("Failed to list inbound message inbox")
         raise HTTPException(status_code=500, detail="Failed to load the inbox")
+
+
+@router.get("/whatsapp-status", response_model=WhatsAppStatusResponse)
+def whatsapp_status(admin: AdminIdentity = Depends(get_current_admin)):
+    """Which WhatsApp provider (if any) is currently live — the
+    Communications Workspace's status indicator. Read-only, never
+    triggers a real send or touches Twilio/Meta directly; just reports
+    which adapter (if any) the registry currently has for "whatsapp".
+    """
+    return communication.whatsapp_status()
