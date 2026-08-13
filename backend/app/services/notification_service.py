@@ -46,6 +46,19 @@ NOTIFICATION_STATUSES = (
 # same kind of action item as an unsubmitted draft, not a delivered outcome.
 NEEDS_REVIEW_STATUSES = ("draft", "awaiting_approval", "failed")
 
+# Every value notifications.channel can actually hold — deliberately NOT
+# "every channel with a registered CommunicationAdapter" (admin/
+# notifications.py's list route used to validate the ?channel= filter
+# that way, via communication.get_adapter(channel) is None): "chat" is a
+# real, valid channel (agent_service._insert_chat_answer writes it) that
+# intentionally has no adapter at all — a chat answer already reached the
+# customer synchronously the moment it was written, there's nothing left
+# to dispatch (see that function's own docstring) — so deriving validity
+# from adapter registration wrongly 400'd `?channel=chat`. This is the
+# one place "valid channel value" and "channel with something to
+# dispatch through" are told apart.
+VALID_CHANNELS = ("email", "whatsapp", "chat")
+
 # Where a notification's content originated — derived from the existing
 # `event` field, not a new column: "agent_drafted" is the one event key
 # the AI Agent's on-demand draft path uses (see agent_service.py); every

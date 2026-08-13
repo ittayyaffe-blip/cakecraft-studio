@@ -114,7 +114,7 @@ function renderNotificationStatusBadge(status) {
 // _insert_queued / agent_service.draft_customer_communication) -- so this
 // falls back to "email" (matching notification_service._dispatch's own
 // DEFAULT_CHANNEL resolution) rather than showing nothing.
-const CHANNEL_LABELS = { email: "Email", whatsapp: "WhatsApp" };
+const CHANNEL_LABELS = { email: "Email", whatsapp: "WhatsApp", chat: "Chat" };
 
 function renderChannelBadge(channel) {
   const resolved = channel || "email";

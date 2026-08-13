@@ -29,10 +29,15 @@ from app.schemas.admin_notification import (
     AdminNotificationListResponse,
     NotificationContentUpdateRequest,
 )
-from app.services import communication, inbound_service, notification_service
+from app.services import inbound_service, notification_service
 from app.services.audit_service import record_event
 from app.services.auth_service import AdminIdentity
-from app.services.notification_service import NEEDS_REVIEW_STATUSES, NOTIFICATION_STATUSES, VALID_SOURCES
+from app.services.notification_service import (
+    NEEDS_REVIEW_STATUSES,
+    NOTIFICATION_STATUSES,
+    VALID_CHANNELS,
+    VALID_SOURCES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +117,7 @@ def list_notifications(
         raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
     if view is not None and view not in VIEW_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid view: {view}")
-    if channel is not None and communication.get_adapter(channel) is None:
+    if channel is not None and channel not in VALID_CHANNELS:
         raise HTTPException(status_code=400, detail=f"Invalid channel: {channel}")
     if source is not None and source not in VALID_SOURCES:
         raise HTTPException(status_code=400, detail=f"Invalid source: {source}")

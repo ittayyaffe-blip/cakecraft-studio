@@ -2322,6 +2322,17 @@ h3 {
   color: #2c7a49;
 }
 
+/* Chat has no delivery adapter (a chat answer already reached the
+   customer synchronously the moment it was written -- see
+   agent_service._insert_chat_answer) but is a real, filterable channel
+   value, so it gets its own badge color too -- reuses the existing
+   gold/brown pair .status-badge--source-ai_drafted already established,
+   distinct from email's blue and whatsapp's green. */
+.status-badge--channel-chat {
+  background: var(--color-gold-light);
+  color: var(--color-brown);
+}
+
 /* WhatsApp status banner (Twilio Sandbox integration) — same visual
    language as .admin-review-callout (a warm, informational note, not an
    error), reused here rather than duplicated because this banner's job
@@ -2515,11 +2526,30 @@ h3 {
 /* Substantially roomier on desktop, where there's space to spare for a
    real conversation -- mobile/tablet keep the more compact sizing above
    (and the <=480px override below), same visual language throughout,
-   just more of it. */
+   just more of it. Sized off the viewport (vh/vw), not a fixed cap, so
+   "substantially larger" holds on real desktop displays instead of
+   plateauing at a phone-sized ceiling; message text and the composer
+   input grow with it so the extra room is actually comfortable to read
+   and type in, not just empty space. */
 @media (min-width: 1024px) {
   .chat-widget__panel {
-    width: min(520px, calc(100vw - 2 * var(--space-3)));
-    max-height: min(720px, calc(100vh - 6rem));
+    width: min(640px, calc(100vw - 2 * var(--space-3)));
+    max-height: min(85vh, calc(100vh - 4rem));
+  }
+
+  .chat-widget__bubble {
+    font-size: 1rem;
+    max-width: 80%;
+  }
+
+  .chat-widget__composer input {
+    padding: 0.85rem 1rem;
+    font-size: 1rem;
+  }
+
+  .chat-widget__composer .btn {
+    padding: 0.85rem 1.4rem;
+    font-size: 0.95rem;
   }
 }
 
