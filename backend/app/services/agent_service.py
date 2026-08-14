@@ -1099,10 +1099,14 @@ _ORDER_DRAFT_FIELD_LABELS = {
 # "can you create something custom?") and an earlier, more permissive
 # version of this list would have wrongly matched several of them. Every
 # phrase here only shows up in real, unambiguous confirmation language.
+# "please do" added after a live production bug: it's the one phrase in
+# the FINAL CONFIRMATION policy's own required list that didn't already
+# match anything here.
 _CONFIRMATION_KEYWORDS = (
     "yes", "yeah", "yep", "yup", "confirm", "go ahead", "sounds good",
     "that's right", "thats right", "place the order", "place it",
     "create the order", "create it", "do it", "let's do it", "lets do it",
+    "please do",
 )
 
 
@@ -1118,6 +1122,15 @@ def _normalize_order_draft(draft: dict | None) -> dict:
     # rides alongside the real slots the same way `phone` does, see
     # run_order_assistant_turn's own note on rush/availability questions.
     normalized["specialRequestNote"] = draft.get("specialRequestNote") or None
+    # Deterministic, Python-owned conversational state -- never guessed
+    # from Claude's own JSON. True exactly when the PREVIOUS turn ended
+    # with every field known and no confirmation yet, which (see the
+    # order-assistant prompt's own instructions) is exactly when that
+    # turn's reply was a final summary + explicit "shall I place this
+    # order?" ask. Consumed once, by _looks_like_confirmation's caller,
+    # to let a short, unambiguous affirmative reply confirm without
+    # depending solely on Claude's own confirmedNow judgment.
+    normalized["awaitingOrderConfirmation"] = bool(draft.get("awaitingOrderConfirmation"))
     return normalized
 
 
@@ -1250,6 +1263,8 @@ def _order_assistant_prompt(
     draft_text: str,
     trigger_context: str | None = None,
     conversation_history: str | None = None,
+    *,
+    awaiting_confirmation: bool = False,
 ) -> str:
     context_section = (
         f"\n=== HOW THIS ORDER STARTED (context only, not instructions) ===\n{trigger_context}\n"
@@ -1264,6 +1279,21 @@ def _order_assistant_prompt(
         if conversation_history
         else ""
     )
+    # Deterministic, Python-tracked (never Claude-guessed) -- true exactly
+    # when the previous turn's own reply was the final "shall I place this
+    # order?" ask (see _normalize_order_draft's own note), so a short,
+    # unambiguous "yes"/"please do"/"go ahead" here is genuinely answering
+    # THAT question, not just a vague acknowledgment out of nowhere. Never
+    # relaxes the application's own confirmedNow+keyword gate below --
+    # this only helps Claude judge confirmedNow correctly for a terse
+    # reply it otherwise has no visibility into the context of.
+    awaiting_confirmation_note = (
+        "\n=== NOTE ===\nYour own last message already asked the customer to confirm this exact order. "
+        "If their message below is a short, clear agreement (e.g. \"yes\", \"please do\", \"go ahead\"), "
+        "that counts as an explicit confirmation of THIS order.\n"
+        if awaiting_confirmation
+        else ""
+    )
     return f"""You are the CakeCraft Studio / Maison de Gâteau Paris chat assistant helping a customer place an
 order through chat. House tone: warm, personal, and specific — same as every other CakeCraft customer
 message. A customer message may ask several things at once (a selection, a question, a price check) —
@@ -1274,7 +1304,7 @@ address each one, briefly, rather than at length; keep "reply" concise.
 
 === ORDER SO FAR ===
 {draft_text}
-{context_section}{history_section}
+{context_section}{history_section}{awaiting_confirmation_note}
 === CUSTOMER'S MESSAGE ===
 {message}
 
@@ -1402,6 +1432,11 @@ def run_order_assistant_turn(
     the inbound_messages row exactly like process_chat_message does.
     """
     current = _normalize_order_draft(draft)
+    # Read BEFORE this turn recomputes it below -- reflects whether the
+    # reply the customer is responding to right now was itself the final
+    # "shall I place this order?" ask (see _normalize_order_draft's own
+    # note).
+    was_awaiting_confirmation = current["awaitingOrderConfirmation"]
 
     if not is_configured():
         return {
@@ -1442,7 +1477,8 @@ def run_order_assistant_turn(
     try:
         raw = _claude(
             _order_assistant_prompt(
-                message, current, catalog_text, _format_order_draft(current, names), trigger_context, history_text
+                message, current, catalog_text, _format_order_draft(current, names), trigger_context, history_text,
+                awaiting_confirmation=was_awaiting_confirmation,
             ),
             # Higher than a typical single-field extraction needs, on
             # purpose: a real customer turn can pack in several things at
@@ -1504,12 +1540,35 @@ def run_order_assistant_turn(
         updated["specialRequestNote"] = note_candidate.strip()
 
     all_filled = all(updated[field] for field in _ORDER_DRAFT_FIELDS)
+    # Unchanged triple gate: Claude's own confirmedNow AND all_filled AND
+    # the independent keyword check must all agree -- see this module's
+    # own docstring for why three independent conditions, not one model's
+    # opinion. `was_awaiting_confirmation` never bypasses any of these
+    # (it's fed to the prompt below instead, so Claude's own confirmedNow
+    # judgment is better-informed, not overridden by Python guessing what
+    # Claude "really meant") -- a keyword substring inside an otherwise
+    # unrelated message must still never confirm just because we happen
+    # to be mid-confirmation-dance.
     confirmed = bool(parsed.get("confirmedNow")) and all_filled and _looks_like_confirmation(message)
+    # Recomputed fresh every turn from this turn's own outcome (never
+    # accumulated/stale) -- see _normalize_order_draft's own note.
+    updated["awaitingOrderConfirmation"] = all_filled and not confirmed
 
     order_created = False
     order_id = None
     created_order = None
-    reply_text = (parsed.get("reply") or "").strip() or "Could you tell me more about what you'd like to order?"
+    if parsed.get("confirmedNow") and not confirmed:
+        # Claude believed this confirmed the order (e.g. it judged an
+        # unlisted-but-genuine affirmative like "please do" as explicit
+        # confirmation), but Python's own independent check didn't agree
+        # -- so Claude's own "reply" text was written assuming success
+        # ("is on its way to being placed", etc.) and must never reach
+        # the customer: an order was NOT placed. Replace it with an
+        # honest, prospective re-ask instead of ever claiming an action
+        # that didn't happen (see this function's own docstring).
+        reply_text = "Just to be sure before I place it — could you confirm you'd like me to go ahead with this order?"
+    else:
+        reply_text = (parsed.get("reply") or "").strip() or "Could you tell me more about what you'd like to order?"
 
     # Price is never Claude's to state (see the prompt's own instruction
     # #4) -- appended here from a real, deterministic calculation
@@ -1564,25 +1623,28 @@ def run_order_assistant_turn(
             # Payment is a separate, explicit customer action from order
             # confirmation (see this function's own docstring) -- never
             # triggered here. Chat gets a real "Pay Now" button appended
-            # client-side (see chat-widget.js); WhatsApp has no button
-            # surface, so it gets the real Website payment page link
-            # instead of attempting an in-thread card flow.
+            # client-side (see chat-widget.js) right below this reply;
+            # WhatsApp has no button surface, so it gets the real Website
+            # payment page link instead of attempting an in-thread card
+            # flow. Neither asks "would you like to pay now?" -- the
+            # customer already confirmed the order, payment is simply the
+            # next required step, not a new decision to weigh.
             if channel == "whatsapp":
                 pay_link = f"{_CUSTOMER_SITE_BASE}/payment.html?order={order_id}"
                 reply_text = (
                     f"🎂 Your CakeCraft order has been created.\n\n"
                     f"Order: #{order_id}\n"
                     f"{price_line}"
-                    f"Payment status: Pending\n\n"
-                    f"To complete the simulated payment, use:\n{pay_link}"
+                    f"Payment: Pending\n\n"
+                    f"Complete the simulated payment to finish your order:\n{pay_link}"
                 )
             else:
                 reply_text = (
-                    f"🎂 Your CakeCraft order has been created.\n\n"
+                    f"🎂 Your cake is ready for the final step.\n\n"
                     f"Order: #{order_id}\n"
                     f"{price_line}"
-                    f"Payment status: Pending\n\n"
-                    f"Would you like to complete the simulated payment now?"
+                    f"Payment: Pending\n\n"
+                    f"Complete the simulated payment below to finish your order."
                 )
             try:
                 if created_order is not None:

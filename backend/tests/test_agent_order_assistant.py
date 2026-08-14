@@ -61,6 +61,20 @@ _COMPLETE_DRAFT = {
     "phone": "+15551234567",
 }
 
+# The FINAL CONFIRMATION bug report's configuration: 15 guests -> Medium,
+# Classic Vanilla Birthday, phone valid. Flavor/filling/frosting reuse this
+# file's existing fixture ids (Red Velvet/Lemon Curd aren't in the fixture
+# catalog) -- irrelevant to the confirmation-gate mechanism under test,
+# which never looks at flavor choice, only at whether every field is known.
+_MEDIUM_CONFIRMATION_DRAFT = {
+    "templateId": "tpl-1",
+    "cakeSizeId": _MEDIUM_SIZE_ID,
+    "flavorId": "flav-1",
+    "fillingId": "fill-1",
+    "frostingId": "frost-1",
+    "phone": "+972545446601",
+}
+
 
 def _fake_claude_response(**fields):
     payload = {
@@ -135,6 +149,7 @@ def test_missing_fields_are_requested_no_order_created():
     assert result["draft"] == {
         "templateId": None, "cakeSizeId": None, "flavorId": None, "fillingId": None,
         "frostingId": None, "phone": None, "specialRequestNote": None,
+        "awaitingOrderConfirmation": False,
     }
     assert "size" in result["reply"].lower() or "flavor" in result["reply"].lower()
     mock_create_order.assert_not_called()
@@ -233,6 +248,7 @@ def test_confirmed_complete_order_calls_the_existing_order_service():
     assert result["draft"] == {
         "templateId": None, "cakeSizeId": None, "flavorId": None, "fillingId": None,
         "frostingId": None, "phone": None, "specialRequestNote": None,
+        "awaitingOrderConfirmation": False,
     }
 
 
@@ -530,7 +546,7 @@ def test_failure_path_preserves_a_non_empty_incoming_draft():
     assert result["ai_status"] == "failed"
     assert result["reply"]
     assert result["order_created"] is False
-    assert result["draft"] == {**partial_draft, "specialRequestNote": None}  # nothing lost
+    assert result["draft"] == {**partial_draft, "specialRequestNote": None, "awaitingOrderConfirmation": False}  # nothing lost
     mock_create_order.assert_not_called()
 
 
@@ -825,7 +841,7 @@ def test_failed_order_creation_preserves_the_full_reported_draft_untouched():
         create_order_side_effect=RuntimeError("transient DB error"),
     )
     assert result["order_created"] is False
-    assert result["draft"] == {**_REPORTED_BUG_DRAFT, "specialRequestNote": None}
+    assert result["draft"] == {**_REPORTED_BUG_DRAFT, "specialRequestNote": None, "awaitingOrderConfirmation": False}
     mock_create_order.assert_called_once()
 
 
@@ -884,8 +900,11 @@ def test_chat_order_creation_does_not_automatically_trigger_payment():
     assert result["order_created"] is True
     mock_payment_service.simulate_payment.assert_not_called()
     lowered = result["reply"].lower()
-    assert "payment status: pending" in lowered
-    assert "would you like to complete the simulated payment now" in lowered
+    assert "payment: pending" in lowered
+    # Payment is the next required step, not a new decision to weigh --
+    # never asked as a question (see this function's own note).
+    assert "would you like" not in lowered
+    assert "complete the simulated payment" in lowered
 
 
 def test_chat_order_created_reply_includes_the_real_authoritative_total():
@@ -912,7 +931,7 @@ def test_whatsapp_order_creation_does_not_automatically_trigger_payment():
 
     assert result["order_created"] is True
     mock_payment_service.simulate_payment.assert_not_called()
-    assert "payment status: pending" in result["reply"].lower()
+    assert "payment: pending" in result["reply"].lower()
 
 
 def test_whatsapp_order_created_reply_points_to_the_real_website_payment_page():
@@ -929,6 +948,116 @@ def test_whatsapp_order_created_reply_points_to_the_real_website_payment_page():
     lowered = result["reply"].lower()
     assert "card" not in lowered
     assert "cvv" not in lowered
+
+
+# --- FINAL CONFIRMATION policy: contextual confirmation, no false claims --
+# Reproduces the exact reported production loop: all fields known, final
+# summary shown, "great" correctly doesn't confirm, but "please do" --
+# answering the assistant's own "shall I place this order?" -- should have
+# confirmed on the first try. It didn't (keyword-list gap), and the reply
+# claimed the order was "on its way to being placed" even though Python's
+# own gate never created it. Both are fixed below: "please do" is now a
+# recognized keyword, and a Claude/Python disagreement can never reach the
+# customer as a false success claim.
+
+
+def test_reported_confirmation_loop_please_do_confirms_after_final_summary():
+    # Turn 1: everything already known, Claude doesn't itself confirm --
+    # this turn's own outcome must record that it just asked to confirm.
+    turn1, mock_create_order_1, _, _sb1 = _run(
+        "great",
+        _MEDIUM_CONFIRMATION_DRAFT,
+        {"reply": "Everything looks great! Shall I place this order?"},
+    )
+    assert turn1["order_created"] is False
+    assert turn1["draft"]["awaitingOrderConfirmation"] is True
+    mock_create_order_1.assert_not_called()
+
+    # Turn 2: "please do", answering that exact question.
+    turn2, mock_create_order_2, mock_notify, _sb2 = _run(
+        "please do",
+        turn1["draft"],
+        {"confirmedNow": True, "reply": "..."},
+    )
+    assert turn2["order_created"] is True
+    assert turn2["order_id"] == "order-1"
+    mock_create_order_2.assert_called_once()  # exactly once
+    mock_notify.assert_called_once()
+    # Payment is never automatic -- a real, separate customer action.
+    assert "payment: pending" in turn2["reply"].lower()
+    assert "would you like" not in turn2["reply"].lower()
+
+
+def test_unambiguous_affirmatives_confirm_when_awaiting_final_confirmation():
+    awaiting_draft = {**_MEDIUM_CONFIRMATION_DRAFT, "awaitingOrderConfirmation": True}
+    for phrase in ("yes", "yes please", "please do", "go ahead", "place it", "confirmed"):
+        result, mock_create_order, _, _sb = _run(
+            phrase, awaiting_draft, {"confirmedNow": True, "reply": "..."},
+        )
+        assert result["order_created"] is True, f"{phrase!r} should have confirmed"
+        mock_create_order.assert_called_once()
+
+
+def test_ambiguous_standalone_replies_never_confirm_even_while_awaiting_confirmation():
+    # Section 3's hard rule: "great"/"perfect"/"ok"/"thanks" must never
+    # confirm, even in the awaiting-confirmation context, even if (as
+    # simulated here) Claude itself wrongly agrees -- the fixed keyword
+    # list is the deterministic backstop context can never bypass.
+    awaiting_draft = {**_MEDIUM_CONFIRMATION_DRAFT, "awaitingOrderConfirmation": True}
+    for phrase in ("great", "perfect", "ok", "thanks"):
+        result, mock_create_order, _, _sb = _run(
+            phrase, awaiting_draft, {"confirmedNow": True, "reply": "..."},
+        )
+        assert result["order_created"] is False, f"{phrase!r} must not confirm"
+        mock_create_order.assert_not_called()
+
+
+def test_reply_never_claims_success_when_claude_believes_confirmed_but_python_disagrees():
+    # A future keyword-list gap, simulated directly: Claude judges
+    # confirmedNow=true for a phrase not in the deterministic list. Python
+    # must still reject it, AND Claude's premature "it's being placed"
+    # text must never reach the customer.
+    result, mock_create_order, _, _sb = _run(
+        "sure thing",
+        _MEDIUM_CONFIRMATION_DRAFT,
+        {"confirmedNow": True, "reply": "Great news -- your cake is on its way to being placed!"},
+    )
+    assert result["order_created"] is False
+    mock_create_order.assert_not_called()
+    assert "on its way to being placed" not in result["reply"]
+    assert "confirm" in result["reply"].lower()  # the honest, prospective re-ask instead
+
+
+def test_confirmation_cannot_succeed_before_all_fields_are_known():
+    incomplete_draft = {**_MEDIUM_CONFIRMATION_DRAFT, "phone": None, "awaitingOrderConfirmation": True}
+    result, mock_create_order, _, _sb = _run(
+        "please do", incomplete_draft, {"confirmedNow": True, "reply": "..."},
+    )
+    assert result["order_created"] is False
+    mock_create_order.assert_not_called()
+
+
+def test_repeated_please_do_after_success_does_not_duplicate_the_order():
+    awaiting_draft = {**_MEDIUM_CONFIRMATION_DRAFT, "awaitingOrderConfirmation": True}
+    turn1, mock_create_order_1, _, _sb1 = _run("please do", awaiting_draft, {"confirmedNow": True, "reply": "..."})
+    assert turn1["order_created"] is True
+
+    turn2, mock_create_order_2, _, _sb2 = _run("please do", turn1["draft"], {"confirmedNow": True, "reply": "..."})
+    assert turn2["order_created"] is False
+    mock_create_order_2.assert_not_called()
+
+
+def test_prompt_includes_awaiting_confirmation_note_only_when_flagged():
+    catalog_text, _names = agent_service._build_order_catalog(_TEMPLATES, _OPTIONS)
+    normalized = agent_service._normalize_order_draft(_MEDIUM_CONFIRMATION_DRAFT)
+    prompt_with = agent_service._order_assistant_prompt(
+        "please do", normalized, catalog_text, "", awaiting_confirmation=True,
+    )
+    prompt_without = agent_service._order_assistant_prompt(
+        "please do", normalized, catalog_text, "", awaiting_confirmation=False,
+    )
+    assert "already asked the customer to confirm this exact order" in prompt_with
+    assert "already asked the customer to confirm this exact order" not in prompt_without
 
 
 def run_all() -> None:

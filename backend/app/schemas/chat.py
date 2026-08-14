@@ -51,6 +51,12 @@ class ChatOrderDraft(BaseModel):
     # field (see agent_service._order_assistant_prompt's own note on
     # rush/availability questions never being promised, only recorded).
     specialRequestNote: str | None = None
+    # Deterministic conversational state, never Claude-guessed -- true
+    # exactly when the previous turn's reply was the final "shall I place
+    # this order?" ask (see agent_service._normalize_order_draft's own
+    # note). Lets a short, unambiguous affirmative reply confirm without
+    # depending solely on Claude's own confirmedNow judgment.
+    awaitingOrderConfirmation: bool = False
 
 
 class ChatOrderRequest(BaseModel):
