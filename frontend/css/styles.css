@@ -2333,6 +2333,87 @@ h3 {
   color: var(--color-brown);
 }
 
+/* WhatsApp conversation thread (Communications Workspace drawer) — chat-
+   style bubbles reusing the exact same visual language as the customer-
+   facing chat widget's .chat-widget__bubble family (frontend/js/chat-
+   widget.js), so this clearly reads as "a real conversation" rather than
+   another admin table. --incoming (the customer's message) mirrors
+   .chat-widget__bubble--assistant's white/ivory-border treatment;
+   --outgoing (CakeCraft's own message) mirrors .chat-widget__bubble--
+   customer's gold-light fill, same tokens, same rationale: each side of
+   the conversation keeps one consistent color everywhere in this app. */
+.whatsapp-thread {
+  margin-top: var(--space-2);
+}
+
+.whatsapp-thread__messages {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--color-ivory);
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+}
+
+.whatsapp-thread__bubble {
+  max-width: 85%;
+  padding: 0.65rem 0.9rem;
+  border-radius: var(--radius);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.whatsapp-thread__bubble--incoming {
+  align-self: flex-start;
+  background: #fff;
+  border: 1px solid var(--color-ivory-dark);
+  color: var(--color-brown);
+}
+
+.whatsapp-thread__bubble--outgoing {
+  align-self: flex-end;
+  background: var(--color-gold-light);
+  color: var(--color-brown);
+}
+
+.whatsapp-thread__bubble-text {
+  margin: 0 0 0.3rem;
+  white-space: pre-wrap;
+}
+
+.whatsapp-thread__bubble-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--color-brown-soft);
+}
+
+.whatsapp-thread__composer {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: var(--space-2);
+}
+
+.whatsapp-thread__composer textarea {
+  flex: 1;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  color: var(--color-brown);
+  background: #fff;
+  resize: vertical;
+}
+
+.whatsapp-thread__composer .admin-state--error {
+  flex-basis: 100%;
+}
+
 /* WhatsApp status banner (Twilio Sandbox integration) — same visual
    language as .admin-review-callout (a warm, informational note, not an
    error), reused here rather than duplicated because this banner's job

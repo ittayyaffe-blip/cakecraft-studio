@@ -213,6 +213,43 @@ def create_notification_for_order_event(
         return None
 
 
+def create_staff_message(customer_id: str, channel: str, body: str, *, order_id: str | None = None) -> dict:
+    """A staff member typing and sending a message directly — the
+    Communications Workspace's WhatsApp thread reply composer (see
+    admin/communications.py's POST /whatsapp/reply). Not an AI draft
+    (agent_service.draft_customer_communication) and not an order-status
+    template (create_notification_for_order_event above): inserted
+    straight into `notifications` at `draft` status, the exact same
+    table/shape/lifecycle every other creation path already produces, so
+    the existing Send button and approval rules apply completely
+    unchanged — this function only creates the row, it never sends it
+    (see the route, which calls send() as its own, separate second step,
+    same as every other draft in this project).
+
+    `order_id` is optional (nullable on `notifications` since Step 3 —
+    a reply in an ongoing conversation doesn't always concern one
+    specific order) and, unlike `channel`, not validated here: a bad
+    order_id would already fail at the database's foreign-key
+    constraint, and channel is the one value with real, narrower
+    meaning downstream (only a channel with a registered adapter, or
+    "chat", can ever actually be dispatched — see VALID_CHANNELS).
+    """
+    if channel not in VALID_CHANNELS:
+        raise ValueError(f"Invalid channel: {channel!r} (must be one of {VALID_CHANNELS})")
+
+    payload = {
+        "customer_id": customer_id,
+        "order_id": order_id,
+        "event": "staff_composed",
+        "status": "draft",
+        "channel": channel,
+        "subject": None,
+        "body": body,
+    }
+    response = supabase.table("notifications").insert(payload).execute()
+    return get_notification_by_id(response.data[0]["id"])
+
+
 def list_notifications(
     status: str | None = None,
     statuses: tuple[str, ...] | None = None,

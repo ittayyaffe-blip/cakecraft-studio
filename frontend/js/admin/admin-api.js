@@ -220,3 +220,19 @@ async function checkForNewEmail() {
 async function getWhatsAppStatus() {
   return adminFetch("/admin/communications/whatsapp-status");
 }
+
+// One customer's full WhatsApp conversation, merged and chronological —
+// the Communications Workspace's WhatsApp thread view (see
+// WhatsAppThreadResponse). Read-only; sending a reply is two calls,
+// createWhatsAppReply then the existing sendNotification below, same
+// create-then-send shape every other draft in this app already uses.
+async function getWhatsAppThread(customerId) {
+  return adminFetch(`/admin/communications/whatsapp/thread/${encodeURIComponent(customerId)}`);
+}
+
+async function createWhatsAppReply(customerId, body) {
+  return adminFetch("/admin/communications/whatsapp/reply", {
+    method: "POST",
+    body: JSON.stringify({ customerId, body }),
+  });
+}

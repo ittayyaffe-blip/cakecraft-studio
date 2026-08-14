@@ -358,6 +358,124 @@ function buildActionBar(notification) {
   return bar;
 }
 
+// --- WhatsApp conversation thread (Communications Workspace) ---------------
+// A customer's whole WhatsApp history, merged server-side from the two
+// existing tables this project already has (see admin-api.js's
+// getWhatsAppThread) — not a second messaging architecture, just a
+// chronological read over data that already exists. Rendered as chat-style
+// bubbles reusing the customer-facing chat widget's visual language
+// (frontend/js/chat-widget.js), so staff sees a UI that clearly reads as
+// "a real conversation," not another table row.
+
+function buildWhatsAppThreadBubble(message) {
+  const bubble = document.createElement("div");
+  bubble.className =
+    message.direction === "incoming"
+      ? "whatsapp-thread__bubble whatsapp-thread__bubble--incoming"
+      : "whatsapp-thread__bubble whatsapp-thread__bubble--outgoing";
+
+  const text = document.createElement("p");
+  text.className = "whatsapp-thread__bubble-text";
+  text.textContent = message.body;
+  bubble.appendChild(text);
+
+  const meta = document.createElement("div");
+  meta.className = "whatsapp-thread__bubble-meta";
+  const time = document.createElement("span");
+  time.textContent = formatDateTime(message.timestamp);
+  meta.appendChild(time);
+  if (message.direction === "outgoing" && message.status) {
+    meta.appendChild(renderNotificationStatusBadge(message.status));
+  }
+  bubble.appendChild(meta);
+
+  return bubble;
+}
+
+// onSent is called after a reply is created AND actually sent — reuses
+// createWhatsAppReply (creates a draft) then the existing, unmodified
+// sendNotification (the same /admin/notifications/{id}/send every other
+// draft in this app already goes through) as two plain calls, not a new
+// send path — presented to staff as one "Send" click.
+function buildWhatsAppReplyComposer(customerId, onSent) {
+  const form = document.createElement("form");
+  form.className = "whatsapp-thread__composer";
+
+  const textarea = document.createElement("textarea");
+  textarea.rows = 2;
+  textarea.placeholder = "Type a WhatsApp reply…";
+  textarea.setAttribute("aria-label", "WhatsApp reply");
+
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "submit";
+  sendBtn.className = "btn btn-primary btn-small";
+  sendBtn.textContent = "Send";
+
+  const errorEl = document.createElement("p");
+  errorEl.className = "admin-state admin-state--error is-hidden";
+  errorEl.setAttribute("role", "alert");
+
+  form.append(textarea, sendBtn, errorEl);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const messageBody = textarea.value.trim();
+    if (!messageBody) return;
+
+    errorEl.classList.add("is-hidden");
+    sendBtn.disabled = true;
+    try {
+      const created = await createWhatsAppReply(customerId, messageBody);
+      await sendNotification(created.id);
+      textarea.value = "";
+      await onSent();
+    } catch (error) {
+      errorEl.textContent = error.message || "Unable to send this reply.";
+      errorEl.classList.remove("is-hidden");
+    } finally {
+      sendBtn.disabled = false;
+    }
+  });
+
+  return form;
+}
+
+function buildWhatsAppThreadSection(notification) {
+  const section = document.createElement("div");
+  section.className = "whatsapp-thread";
+
+  const heading = document.createElement("h3");
+  heading.className = "admin-drawer__section-heading";
+  heading.textContent = "Conversation";
+  section.appendChild(heading);
+
+  const messagesContainer = document.createElement("div");
+  messagesContainer.className = "whatsapp-thread__messages";
+  section.appendChild(messagesContainer);
+  renderLoadingState(messagesContainer, "Loading conversation…");
+
+  const customerId = notification.customer_id;
+  const loadThread = async () => {
+    try {
+      const thread = await getWhatsAppThread(customerId);
+      messagesContainer.innerHTML = "";
+      if (thread.messages.length === 0) {
+        renderEmptyState(messagesContainer, "No WhatsApp messages yet.");
+      } else {
+        thread.messages.forEach((message) => messagesContainer.appendChild(buildWhatsAppThreadBubble(message)));
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+    } catch (error) {
+      renderErrorState(messagesContainer, "Unable to load the conversation.");
+    }
+  };
+  loadThread();
+
+  section.appendChild(buildWhatsAppReplyComposer(customerId, loadThread));
+
+  return section;
+}
+
 // sourceMessage is the inbound customer message this draft was created
 // from (Step 3), or null for every notification created by the other
 // paths (an order-status change, or a staff-initiated on-demand draft) --
@@ -469,6 +587,15 @@ function renderNotificationDetail(notification, sourceMessage) {
     reason.textContent = intelligence.review_reason;
     callout.append(title, reason);
     body.appendChild(callout);
+  }
+
+  // WhatsApp conversation thread — the customer's whole WhatsApp history
+  // (not just the one inbound message tied to this specific draft, see
+  // sourceMessage below), plus a reply composer. Purely additive: every
+  // other channel, and the Preview/Actions section further down for
+  // *this* notification's own edit/send, are completely unaffected.
+  if (notification.channel === "whatsapp" && notification.customer_id) {
+    body.appendChild(buildWhatsAppThreadSection(notification));
   }
 
   // Step 3: the customer's own message, shown above the AI's draft reply

@@ -62,3 +62,30 @@ class WhatsAppStatusResponse(BaseModel):
     configured: bool
     provider: str | None = None
     sandboxNumber: str | None = None
+
+
+class WhatsAppThreadMessage(BaseModel):
+    """One message in a customer's WhatsApp thread (GET /whatsapp/thread/
+    {customer_id}) — a merged, chronological view over the two existing
+    tables this project already has (inbound_messages for "incoming",
+    notifications for "outgoing"), not a new message-store. `status` is
+    only ever set for an outgoing message (a real notifications.status —
+    draft/sent/failed/etc.); an incoming message has none, it simply
+    arrived.
+    """
+
+    direction: str  # "incoming" | "outgoing"
+    body: str
+    subject: str | None = None
+    timestamp: datetime
+    status: str | None = None
+
+
+class WhatsAppThreadResponse(BaseModel):
+    customer: InboundMessageCustomer | None = None
+    messages: list[WhatsAppThreadMessage]
+
+
+class WhatsAppReplyRequest(BaseModel):
+    customerId: str
+    body: str

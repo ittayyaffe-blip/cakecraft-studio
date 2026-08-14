@@ -403,6 +403,43 @@ def test_list_notifications_statuses_takes_priority_over_single_status():
     query.eq.assert_not_called()
 
 
+# --- create_staff_message() (Communications Workspace WhatsApp reply) ------
+
+
+def test_create_staff_message_rejects_invalid_channel():
+    _expect_value_error(lambda: notification_service.create_staff_message("cust-1", "sms", "hi"))
+
+
+def test_create_staff_message_inserts_a_draft_and_returns_it():
+    inserted_row = {"id": "notif-1", "customer_id": "cust-1", "channel": "whatsapp", "status": "draft", "body": "hi there"}
+
+    insert_query = MagicMock()
+    insert_query.insert.return_value = insert_query
+    insert_query.execute.return_value = SimpleNamespace(data=[inserted_row])
+
+    select_query = MagicMock()
+    select_query.select.return_value = select_query
+    select_query.eq.return_value = select_query
+    select_query.maybe_single.return_value = select_query
+    select_query.execute.return_value = SimpleNamespace(data=inserted_row)
+
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        mock_supabase.table.side_effect = [insert_query, select_query]
+        result = notification_service.create_staff_message("cust-1", "whatsapp", "hi there")
+
+    assert result == inserted_row
+    insert_payload = insert_query.insert.call_args.args[0]
+    assert insert_payload == {
+        "customer_id": "cust-1",
+        "order_id": None,
+        "event": "staff_composed",
+        "status": "draft",
+        "channel": "whatsapp",
+        "subject": None,
+        "body": "hi there",
+    }
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

@@ -670,6 +670,18 @@ def test_get_source_message_for_notification_returns_none_when_absent():
     assert result is None
 
 
+def test_list_channel_messages_for_customer_filters_by_customer_and_channel():
+    rows = [_fake_inbound_row(channel="whatsapp", body="Is my cake ready?")]
+    query = _self_chaining_query_mock(SimpleNamespace(data=rows))
+    with patch.object(inbound_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value = query
+        result = inbound_service.list_channel_messages_for_customer("cust-1", "whatsapp")
+
+    query.eq.assert_any_call("customer_id", "cust-1")
+    query.eq.assert_any_call("channel", "whatsapp")
+    assert result == rows
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

@@ -140,6 +140,27 @@ def get_recent_conversation(customer_id: str, *, before_created_at: str, limit: 
     return list(reversed(response.data))
 
 
+def list_channel_messages_for_customer(customer_id: str, channel: str) -> list[dict]:
+    """Every inbound message from one customer on one channel, oldest
+    first — the "incoming" half of a real conversation thread (see
+    admin/communications.py's GET /whatsapp/thread/{customer_id}, which
+    merges this with notification_service.list_notifications_for_
+    customer's "outgoing" half). Unlike get_recent_conversation above
+    (a capped, AI-prompt-sized window), this is unbounded — a human
+    looking at their own conversation with a customer should see all of
+    it, not a window sized for staying inside a Claude prompt.
+    """
+    response = (
+        supabase.table("inbound_messages")
+        .select("id, body, received_at")
+        .eq("customer_id", customer_id)
+        .eq("channel", channel)
+        .order("received_at")
+        .execute()
+    )
+    return response.data
+
+
 def _draft_reply_and_update(inbound: dict, customer: dict, order: dict | None, order_match_status: str) -> dict:
     """Shared tail of inbound processing once a customer (and, where
     possible, an order) are already known: conversation context -> AI
