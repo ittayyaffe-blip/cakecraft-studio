@@ -2751,6 +2751,40 @@ h3 {
   color: var(--color-brown);
 }
 
+/* Chat-assisted ordering MVP -- reuses the exact green pair already
+   established for a real, live/sent outcome elsewhere in this app
+   (.status-badge--channel-whatsapp, .status-badge--notification-sent),
+   so "your order was actually created" reads as unmistakably different
+   from a normal assistant reply, on the same visual language. */
+.chat-widget__bubble--order-success {
+  align-self: flex-start;
+  background: #e6f2ea;
+  border: 1px solid #bfe0cb;
+  color: #2c7a49;
+  font-weight: 600;
+}
+
+/* The "Start an order?" nudge under a NEW_ORDER_INQUIRY reply -- a
+   small, secondary-feeling pill (not .btn-primary, which is reserved
+   for the composer's own Send button) so it reads as an offer, not the
+   main action. */
+.chat-widget__order-nudge {
+  align-self: flex-start;
+  background: var(--color-gold-light);
+  color: var(--color-brown);
+  border: none;
+  border-radius: 999px;
+  padding: 0.5rem 1rem;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-widget__order-nudge:hover {
+  background: var(--color-gold);
+}
+
 .chat-widget__error {
   margin: 0 var(--space-3);
 }

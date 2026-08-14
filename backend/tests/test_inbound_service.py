@@ -648,6 +648,101 @@ def test_process_chat_message_never_raises_on_agent_failure():
     assert update_payload == {"ai_status": "failed"}
 
 
+# --- Chat-assisted ordering (process_order_assistant_message) --------------
+# The agent_service.run_order_assistant_turn call itself is mocked at its
+# exact boundary here (its own slot-collection/confirmation/order-creation
+# logic is covered in test_agent_order_assistant.py) -- this is purely
+# "did inbound_service wire the audit trail (record -> hand off -> update)
+# the same way process_chat_message above already does."
+
+
+def test_process_order_assistant_message_records_and_updates_the_inbound_row():
+    mock_supabase, queries = _make_supabase_mock(
+        SimpleNamespace(data=None),  # find existing: not found
+        SimpleNamespace(data=[_fake_inbound_row(
+            channel="email", provider_message_id="chat-order:whatever", sender_identifier="jane@example.com",
+            subject="Chat order assistant", body="I'd like to order a cake",
+        )]),  # insert
+        SimpleNamespace(data=[_fake_inbound_row(
+            customer_id="cust-1", order_id=None, ai_status="drafted", draft_notification_id="notif-1",
+        )]),  # update
+    )
+    with (
+        patch.object(inbound_service, "supabase", mock_supabase),
+        patch.object(inbound_service, "agent_service") as mock_agent_service,
+    ):
+        mock_agent_service.run_order_assistant_turn.return_value = {
+            "reply": "What size would you like?",
+            "draft": {"templateId": "tpl-1", "cakeSizeId": None, "flavorId": None, "fillingId": None, "frostingId": None, "phone": None},
+            "order_created": False,
+            "order_id": None,
+            "notification": {"id": "notif-1"},
+            "ai_status": "drafted",
+        }
+        result = inbound_service.process_order_assistant_message("I'd like to order a cake", FAKE_CUSTOMER, {})
+
+    inserted_payload = queries[1].insert.call_args.args[0]
+    assert inserted_payload["channel"] == "email"  # not a new channel value, same as process_chat_message
+    assert inserted_payload["provider_message_id"].startswith("chat-order:")
+
+    update_payload = queries[2].update.call_args.args[0]
+    assert update_payload["customer_id"] == "cust-1"
+    assert update_payload["ai_status"] == "drafted"
+    assert update_payload["draft_notification_id"] == "notif-1"
+
+    assert result == {
+        "reply": "What size would you like?",
+        "draft": {"templateId": "tpl-1", "cakeSizeId": None, "flavorId": None, "fillingId": None, "frostingId": None, "phone": None},
+        "orderCreated": False,
+        "orderId": None,
+    }
+
+
+def test_process_order_assistant_message_surfaces_order_id_when_created():
+    mock_supabase, queries = _make_supabase_mock(
+        SimpleNamespace(data=None),
+        SimpleNamespace(data=[_fake_inbound_row()]),
+        SimpleNamespace(data=[_fake_inbound_row(order_id="order-1", ai_status="drafted", draft_notification_id="notif-2")]),
+    )
+    with (
+        patch.object(inbound_service, "supabase", mock_supabase),
+        patch.object(inbound_service, "agent_service") as mock_agent_service,
+    ):
+        mock_agent_service.run_order_assistant_turn.return_value = {
+            "reply": "Your order has been created — reference order-1.",
+            "draft": {"templateId": None, "cakeSizeId": None, "flavorId": None, "fillingId": None, "frostingId": None, "phone": None},
+            "order_created": True,
+            "order_id": "order-1",
+            "notification": {"id": "notif-2"},
+            "ai_status": "drafted",
+        }
+        result = inbound_service.process_order_assistant_message("Yes, confirm", FAKE_CUSTOMER, {})
+
+    assert result["orderCreated"] is True
+    assert result["orderId"] == "order-1"
+    update_payload = queries[2].update.call_args.args[0]
+    assert update_payload["order_id"] == "order-1"
+
+
+def test_process_order_assistant_message_never_raises_on_agent_failure():
+    mock_supabase, queries = _make_supabase_mock(
+        SimpleNamespace(data=None),
+        SimpleNamespace(data=[_fake_inbound_row()]),
+        SimpleNamespace(data=[_fake_inbound_row(ai_status="failed")]),
+    )
+    with (
+        patch.object(inbound_service, "supabase", mock_supabase),
+        patch.object(inbound_service, "agent_service") as mock_agent_service,
+    ):
+        mock_agent_service.run_order_assistant_turn.side_effect = RuntimeError("Anthropic is down")
+        result = inbound_service.process_order_assistant_message("I'd like to order a cake", FAKE_CUSTOMER, {})
+
+    assert result["reply"]
+    assert result["orderCreated"] is False
+    update_payload = queries[2].update.call_args.args[0]
+    assert update_payload == {"customer_id": "cust-1", "ai_status": "failed"}
+
+
 # --- Inbox / source-message lookups -----------------------------------------
 
 

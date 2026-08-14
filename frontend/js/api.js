@@ -67,3 +67,21 @@ async function askChat(payload) {
 
   return response.json();
 }
+
+// Chat-assisted ordering MVP -- one turn of slot collection/confirmation.
+// `draft` is whatever the previous turn's response.draft was (or absent
+// on the very first turn); the caller (chat-widget.js) just round-trips
+// it, never inspects/builds it itself.
+async function askChatOrder(payload) {
+  const response = await fetch(`${API_BASE_URL}/chat/order`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+
+  return response.json();
+}

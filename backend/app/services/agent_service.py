@@ -49,7 +49,14 @@ import anthropic
 
 from app.core.config import settings
 from app.core.database import supabase
-from app.services import briefing_service, order_service, rag_service
+from app.services import (
+    briefing_service,
+    designer_service,
+    notification_service,
+    order_service,
+    rag_service,
+    template_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -994,4 +1001,272 @@ def answer_customer_question(
         "review_reason": result["review_reason"],
         "knowledge_sources": result["knowledge_sources"],
         "answer": result["body"],
+    }
+
+
+# --- Chat-assisted ordering MVP ---------------------------------------------
+# A second, narrow use of the same "Claude analyzes, the application
+# decides/acts" split as everything above — but Claude's role here is
+# even smaller: extract/update selections from free text against the
+# *real* catalog (never inventing an id — every candidate id Claude
+# returns is checked against the actual active templates/options below
+# before it's trusted), and judge whether the customer's own message is
+# an explicit confirmation. It never calls order_service.create_order()
+# itself; run_order_assistant_turn does that, and only when BOTH Claude
+# says so AND every required field is actually filled AND the raw
+# message independently looks like a "yes" (_looks_like_confirmation) —
+# three independent conditions, not one model's opinion, since a real
+# order is a real, mostly-irreversible side effect (see is_configured
+# below for a project-consistent example of the same fail-closed idea).
+#
+# `draft` is the ChatOrderDraft the client round-trips every turn (see
+# app/schemas/chat.py's own note on why chat is the one place this
+# project keeps client-side conversation state) — this project's Q&A
+# chat endpoint stays fully stateless server-side and completely
+# unaffected; nothing here changes answer_customer_question or
+# _classify_and_respond above it.
+
+_ORDER_DRAFT_FIELDS = ("templateId", "cakeSizeId", "flavorId", "fillingId", "frostingId", "phone")
+
+_ORDER_DRAFT_FIELD_LABELS = {
+    "templateId": "cake design",
+    "cakeSizeId": "size",
+    "flavorId": "flavor",
+    "fillingId": "filling",
+    "frostingId": "frosting",
+    "phone": "phone number",
+}
+
+# Deliberately generous rather than a strict allow-list of exact phrases —
+# a real customer confirms in all kinds of ways ("yes", "sure, do it",
+# "sounds great") — but still a real, independent check: a message that
+# matches none of these can never trigger order creation regardless of
+# what Claude's own confirmedNow field says, catching a misclassification
+# rather than trusting one JSON field alone for an irreversible action.
+_CONFIRMATION_KEYWORDS = (
+    "yes", "yeah", "yep", "confirm", "correct", "place", "create",
+    "go ahead", "sounds good", "that's right", "sure", "perfect",
+    "great", "do it", "okay", "ok", "please",
+)
+
+
+def _looks_like_confirmation(message: str) -> bool:
+    lowered = message.strip().lower()
+    return any(keyword in lowered for keyword in _CONFIRMATION_KEYWORDS)
+
+
+def _normalize_order_draft(draft: dict | None) -> dict:
+    draft = draft or {}
+    return {field: (draft.get(field) or None) for field in _ORDER_DRAFT_FIELDS}
+
+
+def _build_order_catalog(templates: list[dict], options: dict) -> tuple[str, dict[str, str]]:
+    """Both what the prompt shows Claude (id: name lines, so it can map
+    free text to a real id) and an id -> name lookup for rendering a
+    human-readable summary later — built together since they're the same
+    walk over the same data.
+    """
+    lines = ["CAKE DESIGNS (\"templateId\", choose exactly one by id):"]
+    names: dict[str, str] = {}
+    for template in templates:
+        lines.append(f"  {template['id']}: {template['name']} ({template['category']})")
+        names[template["id"]] = template["name"]
+
+    option_sections = (
+        ("cake_sizes", "SIZES (\"cakeSizeId\")"),
+        ("flavors", "FLAVORS (\"flavorId\")"),
+        ("fillings", "FILLINGS (\"fillingId\")"),
+        ("frostings", "FROSTINGS (\"frostingId\")"),
+    )
+    for key, label in option_sections:
+        lines.append(f"{label}, choose exactly one by id):")
+        for option in options[key]:
+            lines.append(f"  {option['id']}: {option['name']}")
+            names[option["id"]] = option["name"]
+
+    return "\n".join(lines), names
+
+
+def _format_order_draft(draft: dict, names: dict[str, str]) -> str:
+    lines = []
+    for field in _ORDER_DRAFT_FIELDS:
+        value = draft.get(field)
+        if not value:
+            lines.append(f"  {_ORDER_DRAFT_FIELD_LABELS[field]}: not yet known")
+        elif field == "phone":
+            lines.append(f"  phone number: {value}")
+        else:
+            lines.append(f"  {_ORDER_DRAFT_FIELD_LABELS[field]}: {names.get(value, value)}")
+    return "\n".join(lines)
+
+
+def _order_assistant_prompt(message: str, draft: dict, catalog_text: str, draft_text: str) -> str:
+    return f"""You are the CakeCraft Studio / Maison de Gâteau Paris chat assistant helping a customer place an
+order through chat. House tone: warm, personal, and specific — same as every other CakeCraft customer
+message.
+
+=== CATALOG (the only valid ids — never invent one, never use a name as an id) ===
+{catalog_text}
+
+=== ORDER SO FAR ===
+{draft_text}
+
+=== CUSTOMER'S MESSAGE ===
+{message}
+
+=== YOUR TASK ===
+1. From the customer's message, extract or update any of: cake design, size, flavor, filling, phone
+   number — matching ONLY a real id from the catalog above (never a name, never an id you made up; if
+   nothing in the catalog clearly matches what they said, leave that field as it already is).
+2. Decide confirmedNow: true ONLY if the customer's message is an explicit "yes, place/confirm/create the
+   order" (not just answering a question about what's in it) AND every field above is already known
+   (including anything you just extracted from this message). Otherwise false.
+3. Write "reply":
+   - If confirmedNow is true: a short, warm confirmation (the application creates the order separately —
+     do not claim it's created yet).
+   - Else if something is still missing: ask ONLY for the specific missing field(s) — never re-ask for
+     something already known above.
+   - Else (everything known, not yet confirmed): a concise summary of the selections and ask for explicit
+     confirmation (e.g. "Shall I go ahead and place this order?").
+4. Respond with ONLY this JSON object, nothing else:
+{{"templateId": "..." or null, "cakeSizeId": "..." or null, "flavorId": "..." or null,
+"fillingId": "..." or null, "frostingId": "..." or null, "phone": "..." or null,
+"confirmedNow": true or false, "reply": "..."}}"""
+
+
+def run_order_assistant_turn(message: str, draft: dict | None, customer: dict) -> dict:
+    """One turn of chat-assisted ordering (app/api/routes/chat.py's
+    POST /order, via inbound_service.process_order_assistant_message).
+
+    Never calls order_service.create_order() unless ALL of: Claude's own
+    confirmedNow, every required field actually filled (checked here,
+    not trusted from Claude), and _looks_like_confirmation(message) —
+    see this module's own section docstring above for why three
+    independent checks, not one. On success, the order is created
+    through the exact same order_service.create_order() the Designer
+    flow's POST /orders route already uses — no parallel creation path
+    — and a `pending`-event notification is drafted exactly like that
+    route does (still just a draft; nothing auto-sends).
+
+    The reply — to the customer, whatever happens — is always persisted
+    via _insert_chat_answer, same "already reached the customer, not a
+    draft" contract chat Q&A already uses (see that function's own
+    docstring); this is still a real, visible record in the
+    Communications Workspace under `channel="chat"`, not a parallel
+    message store.
+
+    Returns {"reply": str, "draft": dict, "order_created": bool,
+    "order_id": str | None, "notification": dict, "ai_status": "drafted"
+    | "failed"} — the last two match _draft_reply_and_update's own
+    shape so inbound_service.process_order_assistant_message can update
+    the inbound_messages row exactly like process_chat_message does.
+    """
+    current = _normalize_order_draft(draft)
+
+    if not is_configured():
+        return {
+            "reply": "Sorry, I can't help with ordering right now — please use the design tool on our "
+            "website, or contact us directly.",
+            "draft": current,
+            "order_created": False,
+            "order_id": None,
+            "notification": None,
+            "ai_status": "failed",
+        }
+
+    templates = template_service.get_active_templates()
+    options = designer_service.get_designer_options()
+    valid_ids = {
+        "templateId": {t["id"] for t in templates},
+        "cakeSizeId": {o["id"] for o in options["cake_sizes"]},
+        "flavorId": {o["id"] for o in options["flavors"]},
+        "fillingId": {o["id"] for o in options["fillings"]},
+        "frostingId": {o["id"] for o in options["frostings"]},
+    }
+    catalog_text, names = _build_order_catalog(templates, options)
+
+    try:
+        raw = _claude(_order_assistant_prompt(message, current, catalog_text, _format_order_draft(current, names)), max_tokens=500)
+        parsed = _parse_json_response(raw)
+    except Exception:
+        logger.exception("Order assistant Claude call failed for customer=%s", customer.get("id"))
+        parsed = None
+
+    if not parsed:
+        notification = _insert_chat_answer(
+            customer, None, "Order Assistant",
+            "Sorry, I had trouble with that — could you try again?",
+        )
+        return {
+            "reply": "Sorry, I had trouble with that — could you try again?",
+            "draft": current,
+            "order_created": False,
+            "order_id": None,
+            "notification": notification,
+            "ai_status": "failed",
+        }
+
+    updated = dict(current)
+    for field in _ORDER_DRAFT_FIELDS:
+        candidate = parsed.get(field)
+        if not isinstance(candidate, str) or not candidate.strip():
+            continue
+        if field == "phone":
+            updated["phone"] = candidate.strip()
+        elif candidate in valid_ids[field]:
+            updated[field] = candidate
+        # else: an id that isn't real -- ignored, never trusted, previous value kept.
+
+    all_filled = all(updated[field] for field in _ORDER_DRAFT_FIELDS)
+    confirmed = bool(parsed.get("confirmedNow")) and all_filled and _looks_like_confirmation(message)
+
+    order_created = False
+    order_id = None
+    created_order = None
+    reply_text = (parsed.get("reply") or "").strip() or "Could you tell me more about what you'd like to order?"
+
+    if confirmed:
+        try:
+            order_id = order_service.create_order(
+                {
+                    "template_id": updated["templateId"],
+                    "cake_size_id": updated["cakeSizeId"],
+                    "flavor_id": updated["flavorId"],
+                    "filling_id": updated["fillingId"],
+                    "frosting_id": updated["frostingId"],
+                    "customer_name": customer.get("name") or "",
+                    "customer_phone": updated["phone"],
+                    "customer_email": customer["email"],
+                }
+            )
+        except Exception:
+            logger.exception("Order creation failed in chat order assistant for customer=%s", customer.get("id"))
+            order_id = None
+
+        if order_id:
+            order_created = True
+            created_order = order_service.get_order_by_id(order_id)
+            reply_text = f"Your order has been created — reference {order_id}. Our team will review it shortly."
+            try:
+                if created_order is not None:
+                    notification_service.create_notification_for_order_event(created_order, "pending")
+            except Exception:
+                logger.exception("Failed to draft order-received notification for chat order=%s", order_id)
+        else:
+            reply_text = (
+                "Sorry, something went wrong creating your order — could you double check your "
+                "selections, or contact us directly?"
+            )
+
+    notification = _insert_chat_answer(customer, created_order, "Order Assistant", reply_text)
+
+    return {
+        "reply": reply_text,
+        # Cleared once the order actually exists -- nothing left to collect;
+        # a fresh chat-assisted order (if any) starts from an empty draft.
+        "draft": _normalize_order_draft(None) if order_created else updated,
+        "order_created": order_created,
+        "order_id": order_id,
+        "notification": notification,
+        "ai_status": "drafted",
     }

@@ -358,6 +358,61 @@ def process_chat_message(question: str, customer: dict, order: dict | None, orde
         }
 
 
+def process_order_assistant_message(message: str, customer: dict, draft: dict) -> dict:
+    """One turn of chat-assisted ordering (api/routes/chat.py's POST
+    /order) — the same "record first, then hand off" contract as every
+    other function in this module, and the same `inbound_messages` table/
+    audit trail every other channel already uses (`channel="email"`, same
+    reasoning as process_chat_message above: the DB constraint only
+    allows `('email', 'whatsapp')`, and this customer's email is exactly
+    what a human-reviewed follow-up would go out through if one were
+    needed). All of the actual slot-collection/confirmation/order-
+    creation logic lives in agent_service.run_order_assistant_turn — this
+    function only wraps it with the same audit-trail bookkeeping
+    process_chat_message already does, it never touches order_service or
+    a Communication Adapter directly.
+    """
+    inbound, _is_new = _record_inbound_message(
+        channel="email",
+        provider_message_id=f"chat-order:{uuid4()}",
+        sender_identifier=customer["email"],
+        subject="Chat order assistant",
+        body=message,
+        received_at=datetime.now(timezone.utc),
+    )
+
+    try:
+        result = agent_service.run_order_assistant_turn(message, draft, customer)
+
+        _update_inbound_message(
+            inbound["id"],
+            {
+                "customer_id": customer["id"],
+                "order_id": result.get("order_id"),
+                "ai_status": result["ai_status"],
+                "draft_notification_id": result["notification"]["id"] if result.get("notification") else None,
+            },
+        )
+        return {
+            "reply": result["reply"],
+            "draft": result["draft"],
+            "orderCreated": result["order_created"],
+            "orderId": result["order_id"],
+        }
+    except Exception:
+        logger.exception("Failed to process order-assistant message for customer=%s", customer.get("id"))
+        try:
+            _update_inbound_message(inbound["id"], {"customer_id": customer["id"], "ai_status": "failed"})
+        except Exception:
+            logger.exception("Failed to even mark order-assistant inbound message %s as failed", inbound.get("id"))
+        return {
+            "reply": "Sorry, I'm having trouble right now — please try again in a moment.",
+            "draft": draft,
+            "orderCreated": False,
+            "orderId": None,
+        }
+
+
 def process_inbound_email(parsed: dict) -> dict:
     """Full pipeline for one parsed inbound email (see communication.
     gmail_inbound.parse_message / fetch_unread_messages) — record,

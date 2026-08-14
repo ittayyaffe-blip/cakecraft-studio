@@ -3,7 +3,10 @@
 // per page). Reuses the existing AI Agent through POST /chat/ask (see
 // api.js's askChat) — this file only builds/renders the widget and talks
 // to that one endpoint, same "API calls in api.js, rendering here" split
-// every other customer-facing page already follows.
+// every other customer-facing page already follows. Chat-assisted
+// ordering (POST /chat/order, api.js's askChatOrder) is the same widget,
+// same transcript, just a second endpoint the composer routes to once
+// the customer opts in — see the "ordering mode" state below.
 //
 // Identity (name + email) and the visible transcript are kept in
 // sessionStorage — not because this project uses client-side storage
@@ -11,6 +14,15 @@
 // because a chat that forgot who you were and everything you'd asked the
 // moment you clicked to the next page wouldn't feel like one conversation
 // at all. Scoped to the browser tab/session, not persisted beyond it.
+//
+// Ordering mode itself (orderingMode/orderDraft below) is deliberately
+// NOT persisted to sessionStorage, unlike identity/history -- this
+// project's chat/order endpoint is stateless per turn by design (the
+// draft round-trips through the request/response), and a page reload
+// mid-order is a rare enough edge case that the minimal, honest MVP
+// behavior (reload = back to plain Q&A, the transcript so far still
+// visible) is preferable to the extra state-restoration complexity of
+// persisting "was I mid-order" across a reload too.
 
 const CHAT_IDENTITY_KEY = "cakecraft_chat_identity";
 const CHAT_HISTORY_KEY = "cakecraft_chat_history";
@@ -69,9 +81,30 @@ function getOrderIdFromUrl() {
 
 function buildMessageBubble(role, text) {
   const bubble = document.createElement("div");
-  bubble.className = role === "customer" ? "chat-widget__bubble chat-widget__bubble--customer" : "chat-widget__bubble chat-widget__bubble--assistant";
+  bubble.className =
+    role === "customer"
+      ? "chat-widget__bubble chat-widget__bubble--customer"
+      : role === "order-success"
+        ? "chat-widget__bubble chat-widget__bubble--order-success"
+        : "chat-widget__bubble chat-widget__bubble--assistant";
   bubble.textContent = text;
   return bubble;
+}
+
+// The "Start an order?" nudge shown under an assistant reply whose
+// intent came back NEW_ORDER_INQUIRY (see ChatAskResponse.intent's own
+// note) -- a plain button, not part of the persisted transcript
+// (appendChatHistory only ever stores {role, text} bubbles), so it
+// simply doesn't reappear on a stored-history re-render, which is the
+// right behavior: it's an offer for *this* reply, not a permanent
+// transcript entry.
+function buildOrderNudge(onStart) {
+  const nudge = document.createElement("button");
+  nudge.type = "button";
+  nudge.className = "chat-widget__order-nudge";
+  nudge.textContent = "Start an order";
+  nudge.addEventListener("click", onStart);
+  return nudge;
 }
 
 function buildIdentityForm(onSubmit) {
@@ -157,6 +190,28 @@ function initChatWidget() {
 
   panel.append(header, intro, messages, errorEl, composer);
 
+  // Chat-assisted ordering MVP: once true, composer submissions go to
+  // sendOrderMessage (POST /chat/order) instead of sendQuestion (POST
+  // /chat/ask) -- see this file's own top note on why this is plain JS
+  // state, not sessionStorage. orderDraft is exactly the ChatOrderDraft
+  // shape the backend returns/expects; null means "nothing collected
+  // yet" (the very first order-assistant turn).
+  let orderingMode = false;
+  let orderDraft = null;
+
+  const startOrderingMode = () => {
+    orderingMode = true;
+    orderDraft = null;
+    questionInput.placeholder = "Tell me what you'd like to order…";
+    questionInput.focus();
+  };
+
+  const exitOrderingMode = () => {
+    orderingMode = false;
+    orderDraft = null;
+    questionInput.placeholder = "Ask a question...";
+  };
+
   const renderStoredHistory = () => {
     getChatHistory().forEach((entry) => messages.appendChild(buildMessageBubble(entry.role, entry.text)));
     messages.scrollTop = messages.scrollHeight;
@@ -186,6 +241,53 @@ function initChatWidget() {
       });
       messages.appendChild(buildMessageBubble("assistant", response.answer));
       appendChatHistory({ role: "assistant", text: response.answer });
+      // Chat-assisted ordering MVP: offer to start collecting an order
+      // only when the AI's own existing intent classification says so,
+      // and only if we're not already mid-order -- never automatic,
+      // the customer always has to click this.
+      if (response.intent === "NEW_ORDER_INQUIRY" && !orderingMode) {
+        messages.appendChild(buildOrderNudge(startOrderingMode));
+      }
+      messages.scrollTop = messages.scrollHeight;
+    } catch (error) {
+      errorEl.textContent = "Sorry, something went wrong. Please try again.";
+      errorEl.classList.remove("is-hidden");
+    } finally {
+      sendBtn.disabled = false;
+    }
+  };
+
+  // One turn of chat-assisted ordering (POST /chat/order) -- same
+  // transcript/history as sendQuestion above, just a different endpoint
+  // and it tracks orderDraft between turns. Never creates an order
+  // itself; that's entirely agent_service.run_order_assistant_turn's
+  // decision, gated on the customer's own explicit confirmation (see
+  // that function's docstring) -- this only renders whatever it decided.
+  const sendOrderMessage = async (message) => {
+    const identity = getChatIdentity();
+    messages.appendChild(buildMessageBubble("customer", message));
+    appendChatHistory({ role: "customer", text: message });
+    messages.scrollTop = messages.scrollHeight;
+    errorEl.classList.add("is-hidden");
+    sendBtn.disabled = true;
+
+    try {
+      const response = await askChatOrder({
+        name: identity.name,
+        email: identity.email,
+        message,
+        draft: orderDraft,
+      });
+      orderDraft = response.draft;
+
+      if (response.orderCreated) {
+        messages.appendChild(buildMessageBubble("order-success", response.reply));
+        appendChatHistory({ role: "order-success", text: response.reply });
+        exitOrderingMode();
+      } else {
+        messages.appendChild(buildMessageBubble("assistant", response.reply));
+        appendChatHistory({ role: "assistant", text: response.reply });
+      }
       messages.scrollTop = messages.scrollHeight;
     } catch (error) {
       errorEl.textContent = "Sorry, something went wrong. Please try again.";
@@ -197,10 +299,14 @@ function initChatWidget() {
 
   composer.addEventListener("submit", (event) => {
     event.preventDefault();
-    const question = questionInput.value.trim();
-    if (!question) return;
+    const text = questionInput.value.trim();
+    if (!text) return;
     questionInput.value = "";
-    sendQuestion(question);
+    if (orderingMode) {
+      sendOrderMessage(text);
+    } else {
+      sendQuestion(text);
+    }
   });
 
   const identity = getChatIdentity();

@@ -1,5 +1,6 @@
-"""Request/response schema for the customer-facing website chat widget
-(app/api/routes/chat.py).
+"""Request/response schemas for the customer-facing website chat widget
+(app/api/routes/chat.py) -- plain Q&A (/ask) and the chat-assisted
+ordering MVP (/order, see agent_service.run_order_assistant_turn).
 """
 
 from pydantic import BaseModel
@@ -19,3 +20,43 @@ class ChatAskRequest(BaseModel):
 
 class ChatAskResponse(BaseModel):
     answer: str
+    # Step 3B's existing intent classification (agent_service.INTENTS),
+    # already computed for every /ask call -- surfaced here purely so the
+    # widget can offer a "Start an order?" nudge when it's
+    # "NEW_ORDER_INQUIRY", without a second classification call. Never
+    # drives anything server-side by itself; the customer still has to
+    # explicitly opt in (see /order below) before any order-related state
+    # exists at all.
+    intent: str | None = None
+
+
+class ChatOrderDraft(BaseModel):
+    """The order-in-progress, round-tripped by the client turn to turn --
+    this project's chat endpoints are already stateless server-side (see
+    chat-widget.js's own note on why chat alone keeps client-side
+    session state), so this is the same pattern extended to hold
+    "what's been selected so far" rather than inventing server-side
+    session storage for one feature. Every field is nullable/omittable:
+    an unset field simply hasn't been collected yet.
+    """
+
+    templateId: str | None = None
+    cakeSizeId: str | None = None
+    flavorId: str | None = None
+    fillingId: str | None = None
+    frostingId: str | None = None
+    phone: str | None = None
+
+
+class ChatOrderRequest(BaseModel):
+    name: str
+    email: str
+    message: str
+    draft: ChatOrderDraft | None = None
+
+
+class ChatOrderResponse(BaseModel):
+    reply: str
+    draft: ChatOrderDraft
+    orderCreated: bool
+    orderId: str | None = None
