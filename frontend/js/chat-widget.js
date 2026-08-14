@@ -236,6 +236,16 @@ function initChatWidget() {
     orderTriggerContext = triggerMessage || null;
     questionInput.placeholder = "Tell me what you'd like to order…";
     questionInput.focus();
+    // Fire the first order-assistant turn immediately, reusing the exact
+    // message that triggered this nudge (already visible as a customer
+    // bubble from the Q&A turn -- `silent` skips re-appending it) so the
+    // customer sees ordering mode actually respond instead of a dead
+    // button click. Same endpoint/draft/triggerContext plumbing as every
+    // later turn, just invoked here instead of waiting for a composer
+    // submit.
+    if (triggerMessage) {
+      sendOrderMessage(triggerMessage, { silent: true });
+    }
   };
 
   const exitOrderingMode = () => {
@@ -296,11 +306,17 @@ function initChatWidget() {
   // itself; that's entirely agent_service.run_order_assistant_turn's
   // decision, gated on the customer's own explicit confirmation (see
   // that function's docstring) -- this only renders whatever it decided.
-  const sendOrderMessage = async (message) => {
+  const sendOrderMessage = async (message, { silent = false } = {}) => {
     const identity = getChatIdentity();
-    messages.appendChild(buildMessageBubble("customer", message));
-    appendChatHistory({ role: "customer", text: message });
-    messages.scrollTop = messages.scrollHeight;
+    // `silent` is only ever true for the auto-fired first turn from
+    // startOrderingMode above -- that message is already on screen from
+    // the Q&A turn that earned the "Start an order" nudge, so re-adding
+    // it here would show the customer's own words twice.
+    if (!silent) {
+      messages.appendChild(buildMessageBubble("customer", message));
+      appendChatHistory({ role: "customer", text: message });
+      messages.scrollTop = messages.scrollHeight;
+    }
     errorEl.classList.add("is-hidden");
     sendBtn.disabled = true;
 

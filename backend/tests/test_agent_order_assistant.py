@@ -345,6 +345,53 @@ def test_trigger_context_is_ignored_once_the_draft_already_has_something():
     assert result["draft"]["cakeSizeId"] == "size-1"
 
 
+# --- "Start an order" click auto-fires the first turn (chat-widget.js) ------
+# The widget now calls this with message == trigger_context (the same
+# customer message that earned the nudge, see startOrderingMode's own note)
+# instead of waiting for the customer to type again.
+
+
+def test_first_turn_with_message_equal_to_trigger_context_seeds_size_and_creates_no_order():
+    trigger = "I would like to order a birthday cake for 20 people."
+    result, mock_create_order, _, _sb = _run(
+        trigger,
+        None,  # fresh draft -- this is the very first turn, exactly what the click fires
+        {"reply": "Perfect -- let's build your birthday cake. Which design would you like?"},
+        trigger_context=trigger,
+    )
+    assert result["draft"]["cakeSizeId"] == _LARGE_SIZE_ID
+    assert result["order_created"] is False
+    assert result["order_id"] is None
+    mock_create_order.assert_not_called()
+
+
+def test_first_turn_prompt_already_shows_the_seeded_size_and_real_catalog_before_claude_is_asked():
+    # Proves size is filled in the "ORDER SO FAR" section *before* the
+    # prompt is built -- Claude is told it's already known, not left to
+    # infer it, and the real Birthday catalog is right there too, so the
+    # reply can list real options instead of asking again.
+    trigger = "I would like to order a birthday cake for 20 people."
+    with (
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.template_service, "get_active_templates", return_value=_TEMPLATES),
+        patch.object(agent_service.designer_service, "get_designer_options", return_value=_OPTIONS),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = _fake_claude_response(
+            reply="Which design would you like?"
+        )
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
+
+        agent_service.run_order_assistant_turn(trigger, None, _CUSTOMER, trigger_context=trigger)
+
+    sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "Large" in sent_prompt  # already in ORDER SO FAR, not left for Claude to ask
+    for template in _TEMPLATES:  # real Birthday catalog available to answer with
+        assert template["id"] in sent_prompt
+        assert template["name"] in sent_prompt
+
+
 # --- Design discovery -------------------------------------------------------
 
 
