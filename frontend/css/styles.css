@@ -2660,33 +2660,51 @@ h3 {
   overflow: hidden;
 }
 
-/* Substantially roomier on desktop, where there's space to spare for a
-   real conversation -- mobile/tablet keep the more compact sizing above
-   (and the <=480px override below), same visual language throughout,
-   just more of it. Sized off the viewport (vh/vw), not a fixed cap, so
-   "substantially larger" holds on real desktop displays instead of
-   plateauing at a phone-sized ceiling; message text and the composer
-   input grow with it so the extra room is actually comfortable to read
-   and type in, not just empty space. */
+/* A real middle tier for tablets -- more room than the phone-sized base
+   rule above, well short of the desktop workspace size below. Must come
+   before the (min-width: 1024px) block: both conditions are true at
+   >=1024px, so source order is what lets desktop's later, larger values
+   win there (equal specificity, last rule in the cascade wins). */
+@media (min-width: 640px) {
+  .chat-widget__panel {
+    width: min(560px, calc(100vw - 2 * var(--space-3)));
+    max-height: min(70vh, calc(100vh - 6rem));
+  }
+}
+
+/* Substantially roomier on desktop -- a real customer-service workspace,
+   not a tiny floating widget, per the explicit sizing pass this went
+   through (roughly 2x the *area* of the previous 640px/85vh desktop
+   size; literal 3x area was ruled out as effectively full-screen at
+   realistic laptop screen heights, where height -- not width -- is the
+   binding constraint; see the commit message for the exact numbers).
+   Sized off the viewport (vh/vw) with a fixed cap, not a bare percentage,
+   so it stays large on real desktop displays without ever exceeding the
+   viewport (no page-level horizontal scroll is possible either way --
+   this panel is `position: fixed`, entirely outside normal page flow).
+   Message text and the composer grow with it so the extra room is
+   actually comfortable to read/type in, not just empty space; bubbles
+   get an absolute cap alongside their percentage so a reply doesn't
+   stretch into an unreadably long line the wider this panel gets. */
 @media (min-width: 1024px) {
   .chat-widget__panel {
-    width: min(640px, calc(100vw - 2 * var(--space-3)));
-    max-height: min(85vh, calc(100vh - 4rem));
+    width: min(1200px, calc(100vw - 2 * var(--space-3)));
+    max-height: min(90vh, calc(100vh - 2rem));
   }
 
   .chat-widget__bubble {
-    font-size: 1rem;
-    max-width: 80%;
+    font-size: 1.05rem;
+    max-width: min(78%, 640px);
   }
 
   .chat-widget__composer input {
-    padding: 0.85rem 1rem;
-    font-size: 1rem;
+    padding: 0.9rem 1.1rem;
+    font-size: 1.05rem;
   }
 
   .chat-widget__composer .btn {
-    padding: 0.85rem 1.4rem;
-    font-size: 0.95rem;
+    padding: 0.9rem 1.5rem;
+    font-size: 1rem;
   }
 }
 
