@@ -198,10 +198,17 @@ function initChatWidget() {
   // yet" (the very first order-assistant turn).
   let orderingMode = false;
   let orderDraft = null;
+  // The ONE customer message that triggered the "Start an order" nudge --
+  // sent once, on the very first /chat/order call only, so the assistant
+  // can try mapping something like "for 20 people" to a real size without
+  // asking again (see ChatOrderRequest.triggerContext's own note). Not a
+  // broader history import: cleared immediately after that first send.
+  let orderTriggerContext = null;
 
-  const startOrderingMode = () => {
+  const startOrderingMode = (triggerMessage) => {
     orderingMode = true;
     orderDraft = null;
+    orderTriggerContext = triggerMessage || null;
     questionInput.placeholder = "Tell me what you'd like to order…";
     questionInput.focus();
   };
@@ -209,6 +216,7 @@ function initChatWidget() {
   const exitOrderingMode = () => {
     orderingMode = false;
     orderDraft = null;
+    orderTriggerContext = null;
     questionInput.placeholder = "Ask a question...";
   };
 
@@ -246,7 +254,7 @@ function initChatWidget() {
       // and only if we're not already mid-order -- never automatic,
       // the customer always has to click this.
       if (response.intent === "NEW_ORDER_INQUIRY" && !orderingMode) {
-        messages.appendChild(buildOrderNudge(startOrderingMode));
+        messages.appendChild(buildOrderNudge(() => startOrderingMode(question)));
       }
       messages.scrollTop = messages.scrollHeight;
     } catch (error) {
@@ -271,12 +279,19 @@ function initChatWidget() {
     errorEl.classList.add("is-hidden");
     sendBtn.disabled = true;
 
+    // Only ever sent on the first order-assistant turn (see
+    // startOrderingMode) -- cleared immediately regardless of outcome so
+    // a retry after an error doesn't resend stale context.
+    const triggerContext = orderTriggerContext;
+    orderTriggerContext = null;
+
     try {
       const response = await askChatOrder({
         name: identity.name,
         email: identity.email,
         message,
         draft: orderDraft,
+        triggerContext: triggerContext || undefined,
       });
       orderDraft = response.draft;
 

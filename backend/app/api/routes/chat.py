@@ -75,6 +75,7 @@ def order(request: ChatOrderRequest):
             message,
             {"id": customer_id, "name": request.name, "email": request.email},
             request.draft.model_dump() if request.draft else {},
+            trigger_context=request.triggerContext,
         )
     except Exception:
         logger.exception("Chat order-assistant turn failed for email=%s", request.email)

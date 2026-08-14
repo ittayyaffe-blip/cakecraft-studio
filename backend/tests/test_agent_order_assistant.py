@@ -21,13 +21,21 @@ from app.services import agent_service
 
 _CUSTOMER = {"id": "cust-1", "name": "Jane Doe", "email": "jane@example.com"}
 
-_TEMPLATES = [{"id": "tpl-1", "name": "Classic Vanilla", "category": "Birthday"}]
+_TEMPLATES = [
+    {"id": "tpl-1", "name": "Classic Vanilla", "category": "Birthday", "base_price": 45.0},
+    {"id": "tpl-2", "name": "Chocolate Confetti Celebration", "category": "Birthday", "base_price": 52.0},
+]
 _OPTIONS = {
-    "cake_sizes": [{"id": "size-1", "name": "Medium (serves 12)"}],
+    "cake_sizes": [
+        {"id": "size-1", "name": "Small", "price_adjustment": 0, "servings_min": 8, "servings_max": 10},
+        {"id": "size-2", "name": "Medium", "price_adjustment": 50, "servings_min": 12, "servings_max": 15},
+        {"id": "size-3", "name": "Large", "price_adjustment": 100, "servings_min": 18, "servings_max": 22},
+    ],
     "flavors": [{"id": "flav-1", "name": "Chocolate"}],
-    "fillings": [{"id": "fill-1", "name": "Buttercream"}],
-    "frostings": [{"id": "frost-1", "name": "Vanilla Buttercream"}],
+    "fillings": [{"id": "fill-1", "name": "Chocolate Ganache"}],
+    "frostings": [{"id": "frost-1", "name": "Buttercream"}],
 }
+_LARGE_SIZE_ID = "size-3"
 
 _COMPLETE_DRAFT = {
     "templateId": "tpl-1",
@@ -52,7 +60,7 @@ def _mock_insert_result(notif_id="notif-order-1"):
     return SimpleNamespace(data=[{"id": notif_id, "status": "sent", "channel": "chat"}])
 
 
-def _run(message, draft, claude_fields, *, create_order_side_effect=None):
+def _run(message, draft, claude_fields, *, create_order_side_effect=None, trigger_context=None, claude_side_effect=None):
     """Shared harness: patches every external boundary, returns
     run_order_assistant_turn's result plus the mocks for assertions.
     """
@@ -66,14 +74,17 @@ def _run(message, draft, claude_fields, *, create_order_side_effect=None):
         patch.object(agent_service.order_service, "get_order_by_id", return_value={"id": "order-1", "status": "pending"}),
         patch.object(agent_service.notification_service, "create_notification_for_order_event") as mock_notify,
     ):
-        mock_anthropic_cls.return_value.messages.create.return_value = _fake_claude_response(**claude_fields)
+        if claude_side_effect is not None:
+            mock_anthropic_cls.return_value.messages.create.side_effect = claude_side_effect
+        else:
+            mock_anthropic_cls.return_value.messages.create.return_value = _fake_claude_response(**claude_fields)
         mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
         if create_order_side_effect is not None:
             mock_create_order.side_effect = create_order_side_effect
         else:
             mock_create_order.return_value = "order-1"
 
-        result = agent_service.run_order_assistant_turn(message, draft, _CUSTOMER)
+        result = agent_service.run_order_assistant_turn(message, draft, _CUSTOMER, trigger_context=trigger_context)
 
     return result, mock_create_order, mock_notify
 
@@ -250,6 +261,185 @@ def test_not_configured_returns_safe_message_without_calling_claude_or_catalog()
     assert result["ai_status"] == "failed"
     mock_templates.assert_not_called()
     mock_anthropic_cls.assert_not_called()
+
+
+# --- Live-bug regression: multi-part turn (selection + question + price) --
+# Reproduced live against the real Anthropic API before this fix (not
+# guessed): the old max_tokens=500 budget truncated Claude's JSON output
+# mid-string while it tried to enumerate the entire 15-template catalog
+# in response to "other designs", producing unparseable JSON and the
+# generic "Sorry, I had trouble with that" fallback. See the commit
+# message for the exact reproduction and raw truncated output.
+
+
+def test_multi_slot_turn_with_design_question_and_price_question_does_not_crash():
+    result, mock_create_order, _ = _run(
+        "i would like to hear about other disigned , and i already mention few times that it is for 20 "
+        "people. filling - Chocolate Ganache and frosting ,Buttercream, and how nuch is the cost of this cack?",
+        None,
+        {
+            "fillingId": "fill-1",
+            "frostingId": "frost-1",
+            "asksAboutPrice": True,
+            "reply": "Noted! Here are a couple of birthday designs: Classic Vanilla, Chocolate Confetti Celebration.",
+        },
+    )
+
+    assert result["ai_status"] == "drafted"
+    assert result["draft"]["fillingId"] == "fill-1"  # Chocolate Ganache retained
+    assert result["draft"]["frostingId"] == "frost-1"  # Buttercream retained
+    mock_create_order.assert_not_called()  # not a confirmation -- must not create anything
+
+
+# --- Guest count -> real size (the /chat/ask -> /chat/order handoff) -------
+
+
+def test_extract_guest_count_handles_real_phrasing_variants():
+    assert agent_service._extract_guest_count("I would like to order a birthday cake for 20 nice people") == 20
+    assert agent_service._extract_guest_count("it is for 20 people") == 20
+    assert agent_service._extract_guest_count("a cake for 25 guests") == 25
+    assert agent_service._extract_guest_count("no number mentioned here") is None
+
+
+def test_size_for_guest_count_maps_to_the_real_catalog_range():
+    assert agent_service._size_for_guest_count(20, _OPTIONS["cake_sizes"]) == _LARGE_SIZE_ID
+    assert agent_service._size_for_guest_count(9, _OPTIONS["cake_sizes"]) == "size-1"
+    assert agent_service._size_for_guest_count(1000, _OPTIONS["cake_sizes"]) is None  # no guessing the closest one
+
+
+def test_trigger_context_seeds_the_correct_size_on_the_first_turn_only():
+    result, _, _ = _run(
+        "chocolate cake which will look impressive",
+        None,  # fresh draft -- the seed only ever applies here
+        {"reply": "Great choice! What flavor, filling, frosting, and phone number?"},
+        trigger_context="I would like to order a birthday cake for 20 nice people",
+    )
+    assert result["draft"]["cakeSizeId"] == _LARGE_SIZE_ID
+
+
+def test_trigger_context_is_ignored_once_the_draft_already_has_something():
+    # Only ever consulted on a genuinely fresh draft (the frontend sends
+    # it exactly once, see chat-widget.js's own note) -- a non-empty
+    # incoming draft's own already-collected size must not be silently
+    # overridden by a stale trigger context on a later turn.
+    draft_with_a_different_size_already_chosen = {**_COMPLETE_DRAFT, "cakeSizeId": "size-1"}
+    result, _, _ = _run(
+        "actually let's go with chocolate",
+        draft_with_a_different_size_already_chosen,
+        {"reply": "Got it."},
+        trigger_context="a cake for 20 people",
+    )
+    assert result["draft"]["cakeSizeId"] == "size-1"
+
+
+# --- Design discovery -------------------------------------------------------
+
+
+def test_prompt_constrains_design_listing_to_the_real_catalog_only():
+    catalog_text, _names = agent_service._build_order_catalog(_TEMPLATES, _OPTIONS)
+    prompt = agent_service._order_assistant_prompt(
+        "what other designs do you have?", agent_service._normalize_order_draft(None), catalog_text, ""
+    )
+
+    assert "AT MOST 4" in prompt
+    assert "never list the whole catalog" in prompt
+    for template in _TEMPLATES:
+        assert template["id"] in prompt
+        assert template["name"] in prompt
+
+
+def test_design_discovery_reply_reaches_the_customer_unmodified():
+    result, _, _ = _run(
+        "what other designs do you have?",
+        None,
+        {"reply": "We also have Chocolate Confetti Celebration and Classic Vanilla for birthdays!"},
+    )
+    assert "Chocolate Confetti Celebration" in result["reply"]
+
+
+# --- Price: never hallucinated, only from real catalog math ----------------
+
+
+def test_price_question_appends_the_real_computed_total_not_claudes_own_number():
+    result, _, _ = _run(
+        "how much would this cost?",
+        {**_COMPLETE_DRAFT, "templateId": "tpl-1", "cakeSizeId": _LARGE_SIZE_ID},
+        {"asksAboutPrice": True, "reply": "Great question!"},
+    )
+    # tpl-1 base_price 45.0 + Large's price_adjustment 100 = 145.00 -- the
+    # exact real catalog arithmetic order_service.create_order() itself
+    # uses (base_price + size.price_adjustment only).
+    assert "$145.00" in result["reply"]
+
+
+def test_exact_price_returned_only_when_template_and_size_are_both_known():
+    result, _, _ = _run(
+        "how much would this cost?",
+        {**_COMPLETE_DRAFT, "templateId": "tpl-2", "cakeSizeId": "size-1"},
+        {"asksAboutPrice": True, "reply": "Sure!"},
+    )
+    assert "$52.00" in result["reply"]  # tpl-2 base_price 52.0 + Small's 0 adjustment
+
+
+def test_missing_price_dependency_is_explained_not_guessed():
+    design_not_chosen_yet = {**_COMPLETE_DRAFT, "templateId": None}
+    result, _, _ = _run(
+        "how much would this cost?",
+        design_not_chosen_yet,
+        {"asksAboutPrice": True, "reply": "Happy to help!"},
+    )
+    assert "$" not in result["reply"]  # no number invented
+    assert "design and size" in result["reply"]
+
+
+# --- Slots survive an informational question, and the confirmation gate ----
+# stays exactly as strict as before (Claude's confirmedNow, every field
+# filled, AND the raw message independently looking like a "yes" -- all
+# three, unweakened by any of the above).
+
+
+def test_collected_slots_survive_a_purely_informational_question():
+    draft_with_filling_and_frosting_already_known = {
+        "templateId": None, "cakeSizeId": None, "flavorId": None,
+        "fillingId": "fill-1", "frostingId": "frost-1", "phone": None,
+    }
+    result, mock_create_order, _ = _run(
+        "what other designs do you have?",
+        draft_with_filling_and_frosting_already_known,
+        {"reply": "Here are a couple of options: Classic Vanilla, Chocolate Confetti Celebration."},
+    )
+    assert result["draft"]["fillingId"] == "fill-1"
+    assert result["draft"]["frostingId"] == "frost-1"
+    mock_create_order.assert_not_called()
+
+
+def test_no_order_created_for_the_exact_reported_multi_part_message():
+    result, mock_create_order, _ = _run(
+        "i would like to hear about other disigned , and i already mention few times that it is for 20 "
+        "people. filling - Chocolate Ganache and frosting ,Buttercream, and how nuch is the cost of this cack?",
+        None,
+        {"fillingId": "fill-1", "frostingId": "frost-1", "asksAboutPrice": True, "confirmedNow": False, "reply": "..."},
+    )
+    assert result["order_created"] is False
+    mock_create_order.assert_not_called()
+
+
+# --- Failure path: safe reply, draft never lost -----------------------------
+
+
+def test_failure_path_preserves_a_non_empty_incoming_draft():
+    partial_draft = {**_COMPLETE_DRAFT, "phone": None}  # a real, in-progress draft
+    result, mock_create_order, _ = _run(
+        "how much would this cost?",
+        partial_draft,
+        {},
+        claude_side_effect=RuntimeError("Anthropic API down"),
+    )
+    assert result["ai_status"] == "failed"
+    assert result["reply"]
+    assert result["order_created"] is False
+    assert result["draft"] == partial_draft  # nothing lost
+    mock_create_order.assert_not_called()
 
 
 def run_all() -> None:

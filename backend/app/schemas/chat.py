@@ -53,6 +53,15 @@ class ChatOrderRequest(BaseModel):
     email: str
     message: str
     draft: ChatOrderDraft | None = None
+    # The ONE customer message that made the widget offer "Start an
+    # order?" in the first place (see ChatAskResponse.intent) -- sent
+    # once, by the widget itself, only on the very first ordering turn
+    # (empty/absent on every later one). Not a broad conversation-
+    # history import: agent_service.run_order_assistant_turn only ever
+    # consults it to try mapping an already-stated guest count to a real
+    # cake size, via a deterministic catalog lookup, before Claude is
+    # even called -- see that function's own docstring.
+    triggerContext: str | None = None
 
 
 class ChatOrderResponse(BaseModel):

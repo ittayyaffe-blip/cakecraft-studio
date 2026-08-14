@@ -696,6 +696,32 @@ def test_process_order_assistant_message_records_and_updates_the_inbound_row():
         "orderCreated": False,
         "orderId": None,
     }
+    mock_agent_service.run_order_assistant_turn.assert_called_once_with(
+        "I'd like to order a cake", {}, FAKE_CUSTOMER, trigger_context=None
+    )
+
+
+def test_process_order_assistant_message_forwards_trigger_context():
+    mock_supabase, _queries = _make_supabase_mock(
+        SimpleNamespace(data=None),
+        SimpleNamespace(data=[_fake_inbound_row()]),
+        SimpleNamespace(data=[_fake_inbound_row(ai_status="drafted")]),
+    )
+    with (
+        patch.object(inbound_service, "supabase", mock_supabase),
+        patch.object(inbound_service, "agent_service") as mock_agent_service,
+    ):
+        mock_agent_service.run_order_assistant_turn.return_value = {
+            "reply": "Got it!", "draft": {}, "order_created": False, "order_id": None,
+            "notification": {"id": "notif-1"}, "ai_status": "drafted",
+        }
+        inbound_service.process_order_assistant_message(
+            "chocolate, impressive", FAKE_CUSTOMER, {}, trigger_context="birthday cake for 20 nice people"
+        )
+
+    mock_agent_service.run_order_assistant_turn.assert_called_once_with(
+        "chocolate, impressive", {}, FAKE_CUSTOMER, trigger_context="birthday cake for 20 nice people"
+    )
 
 
 def test_process_order_assistant_message_surfaces_order_id_when_created():

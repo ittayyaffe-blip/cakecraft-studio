@@ -118,6 +118,7 @@ def test_order_finds_or_creates_the_customer_and_hands_off_with_the_draft():
         "Yes, please confirm",
         {"id": "cust-1", "name": "Jane Doe", "email": "jane@example.com"},
         {"templateId": "tpl-1", "cakeSizeId": None, "flavorId": None, "fillingId": None, "frostingId": None, "phone": None},
+        trigger_context=None,
     )
 
 
@@ -134,6 +135,24 @@ def test_order_passes_an_empty_draft_on_the_first_turn():
         chat.order(request)
 
     assert mock_process.call_args.args[2] == {}
+
+
+def test_order_passes_trigger_context_through_when_present():
+    request = ChatOrderRequest(
+        name="Jane Doe", email="jane@example.com", message="chocolate, impressive",
+        draft=None, triggerContext="birthday cake for 20 nice people",
+    )
+    with (
+        patch.object(chat.order_service, "find_or_create_customer", return_value="cust-1"),
+        patch.object(
+            chat.inbound_service,
+            "process_order_assistant_message",
+            return_value={"reply": "Got it!", "draft": {}, "orderCreated": False, "orderId": None},
+        ) as mock_process,
+    ):
+        chat.order(request)
+
+    assert mock_process.call_args.kwargs["trigger_context"] == "birthday cake for 20 nice people"
 
 
 def test_order_rejects_a_blank_message_before_touching_any_service():

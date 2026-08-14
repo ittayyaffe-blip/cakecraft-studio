@@ -358,7 +358,9 @@ def process_chat_message(question: str, customer: dict, order: dict | None, orde
         }
 
 
-def process_order_assistant_message(message: str, customer: dict, draft: dict) -> dict:
+def process_order_assistant_message(
+    message: str, customer: dict, draft: dict, *, trigger_context: str | None = None
+) -> dict:
     """One turn of chat-assisted ordering (api/routes/chat.py's POST
     /order) — the same "record first, then hand off" contract as every
     other function in this module, and the same `inbound_messages` table/
@@ -371,6 +373,10 @@ def process_order_assistant_message(message: str, customer: dict, draft: dict) -
     function only wraps it with the same audit-trail bookkeeping
     process_chat_message already does, it never touches order_service or
     a Communication Adapter directly.
+
+    `trigger_context` is passed straight through to run_order_assistant_
+    turn unchanged — see that function's own docstring for exactly how
+    (and how little) it's used.
     """
     inbound, _is_new = _record_inbound_message(
         channel="email",
@@ -382,7 +388,7 @@ def process_order_assistant_message(message: str, customer: dict, draft: dict) -
     )
 
     try:
-        result = agent_service.run_order_assistant_turn(message, draft, customer)
+        result = agent_service.run_order_assistant_turn(message, draft, customer, trigger_context=trigger_context)
 
         _update_inbound_message(
             inbound["id"],
