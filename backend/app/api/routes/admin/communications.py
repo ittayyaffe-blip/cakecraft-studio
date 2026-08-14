@@ -76,41 +76,22 @@ def whatsapp_status(admin: AdminIdentity = Depends(get_current_admin)):
 def whatsapp_thread(customer_id: str, admin: AdminIdentity = Depends(get_current_admin)):
     """One customer's full WhatsApp conversation, merged and chronological
     — the Communications Workspace's WhatsApp thread view. Not a new
-    message store: "incoming" comes from the existing `inbound_messages`
-    table (inbound_service.list_channel_messages_for_customer), "outgoing"
-    from the existing `notifications` table (notification_service.
-    list_notifications_for_customer, filtered to channel="whatsapp" here
-    — that function itself stays channel-agnostic, matching every other
-    call site). Read-only; sending happens through the existing
-    /admin/notifications/{id}/send route, unchanged.
+    message store: inbound_service.get_whatsapp_conversation merges the
+    existing `inbound_messages` ("incoming") and `notifications`
+    ("outgoing") tables — the same merge the WhatsApp assisted-ordering
+    connector reuses for AI context, not a second copy of this logic.
+    Read-only; sending happens through the existing /admin/notifications/
+    {id}/send route, unchanged.
     """
     customer = customer_service.get_customer_by_id(customer_id)
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
 
     try:
-        incoming = inbound_service.list_channel_messages_for_customer(customer_id, "whatsapp")
-        outgoing = [
-            n for n in notification_service.list_notifications_for_customer(customer_id) if n.get("channel") == "whatsapp"
-        ]
+        messages = inbound_service.get_whatsapp_conversation(customer_id)
     except Exception:
         logger.exception("Failed to load WhatsApp thread for customer %s", customer_id)
         raise HTTPException(status_code=500, detail="Failed to load the WhatsApp thread")
-
-    messages = [
-        {"direction": "incoming", "body": m["body"], "subject": None, "timestamp": m["received_at"], "status": None}
-        for m in incoming
-    ] + [
-        {
-            "direction": "outgoing",
-            "body": n["body"],
-            "subject": n.get("subject"),
-            "timestamp": n.get("sent_at") or n["created_at"],
-            "status": n["status"],
-        }
-        for n in outgoing
-    ]
-    messages.sort(key=lambda m: m["timestamp"])
 
     return {"customer": customer, "messages": messages}
 

@@ -2769,6 +2769,21 @@ h3 {
   color: var(--color-brown);
 }
 
+/* Website First (see chat-widget.js's own appendTextWithLinks) -- a real
+   CakeCraft link inside a reply, styled with the existing gold accent
+   instead of default browser blue, underlined only on hover to stay
+   readable inside a small bubble. */
+.chat-widget__bubble a {
+  color: var(--color-gold);
+  font-weight: 600;
+  text-decoration: none;
+  word-break: break-word;
+}
+
+.chat-widget__bubble a:hover {
+  text-decoration: underline;
+}
+
 /* Chat-assisted ordering MVP -- reuses the exact green pair already
    established for a real, live/sent outcome elsewhere in this app
    (.status-badge--channel-whatsapp, .status-badge--notification-sent),

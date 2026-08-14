@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.core.database import supabase
-from app.services import agent_service, customer_service, order_service
+from app.services import agent_service, customer_service, notification_service, order_service
 from app.services.communication import gmail_inbound
 
 logger = logging.getLogger(__name__)
@@ -161,6 +161,47 @@ def list_channel_messages_for_customer(customer_id: str, channel: str) -> list[d
     return response.data
 
 
+def get_whatsapp_conversation(customer_id: str, *, limit: int | None = None) -> list[dict]:
+    """One customer's WhatsApp conversation, merged and chronological --
+    "incoming" from list_channel_messages_for_customer above, "outgoing"
+    from the existing notification_service.list_notifications_for_
+    customer (filtered to channel="whatsapp" here; that function itself
+    stays channel-agnostic). Extracted from admin/communications.py's
+    GET /whatsapp/thread/{customer_id} (that route now just calls this)
+    so the WhatsApp assisted-ordering connector (process_inbound_
+    whatsapp_order_turn) can reuse the exact same merge for AI context
+    instead of a second, separately-maintained one.
+
+    `limit` (unbounded by default, matching the Communications Workspace
+    thread view's own need to show everything) caps to the most recent N
+    entries when given -- the assisted-ordering connector uses this to
+    keep the AI prompt small, the same reasoning get_recent_conversation
+    above already established for Q&A grounding.
+    """
+    incoming = list_channel_messages_for_customer(customer_id, "whatsapp")
+    outgoing = [
+        n for n in notification_service.list_notifications_for_customer(customer_id) if n.get("channel") == "whatsapp"
+    ]
+
+    messages = [
+        {"id": m["id"], "direction": "incoming", "body": m["body"], "subject": None, "timestamp": m["received_at"], "status": None}
+        for m in incoming
+    ] + [
+        {
+            "id": None,
+            "direction": "outgoing",
+            "body": n["body"],
+            "subject": n.get("subject"),
+            "timestamp": n.get("sent_at") or n["created_at"],
+            "status": n["status"],
+        }
+        for n in outgoing
+    ]
+    messages.sort(key=lambda m: m["timestamp"])
+
+    return messages[-limit:] if limit else messages
+
+
 def _draft_reply_and_update(inbound: dict, customer: dict, order: dict | None, order_match_status: str) -> dict:
     """Shared tail of inbound processing once a customer (and, where
     possible, an order) are already known: conversation context -> AI
@@ -207,12 +248,81 @@ def _draft_reply_and_update(inbound: dict, customer: dict, order: dict | None, o
             return inbound
 
 
+def _is_continuing_whatsapp_order(customer_id: str, before_created_at: str) -> bool:
+    """Was the customer's most recent prior WhatsApp message part of an
+    active assisted-order conversation that hasn't resulted in a created
+    order yet? Reuses the existing `inbound_messages.intent`/`order_id`
+    columns as the state signal — no new storage, no new table. The
+    FIRST order-related WhatsApp message always goes through the normal
+    classify-and-draft path below unchanged (so it gets the Website
+    First framing from agent_service._classify_and_respond, same as
+    chat's first message) — it's the real `intent="NEW_ORDER_INQUIRY"`
+    that path already sets on that row, before this connector existed,
+    that this checks for. process_inbound_whatsapp_order_turn keeps
+    setting the same intent on every later turn too, so a multi-message
+    ordering conversation keeps recognizing itself, right up until an
+    `order_id` actually lands on one of those rows.
+    """
+    response = (
+        supabase.table("inbound_messages")
+        .select("intent, order_id")
+        .eq("customer_id", customer_id)
+        .eq("channel", "whatsapp")
+        .lt("created_at", before_created_at)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not response.data:
+        return False
+    last = response.data[0]
+    return last.get("intent") == "NEW_ORDER_INQUIRY" and not last.get("order_id")
+
+
+def process_inbound_whatsapp_order_turn(inbound: dict, customer: dict) -> dict:
+    """One turn of WhatsApp assisted ordering — the minimum connector
+    reusing chat-assisted ordering's own agent_service.
+    run_order_assistant_turn (channel="whatsapp" only changes how the
+    reply is persisted, see that function's own docstring), the existing
+    order_service.create_order(), and the existing inbound_messages/
+    notifications tables for context (get_whatsapp_conversation, capped
+    to a short recent window — plenty for a real ordering back-and-forth,
+    not the full unbounded thread the Communications Workspace shows).
+    No new database, no new adapter, no bypassing human review: the
+    reply still lands as a `draft` WhatsApp notification for a human to
+    send from the Communications Workspace, the exact same gate every
+    other WhatsApp reply already goes through — assisted ordering
+    doesn't get a shortcut around it. Order *creation* itself is gated
+    only by run_order_assistant_turn's own triple confirmation check,
+    same as chat.
+    """
+    conversation = [m for m in get_whatsapp_conversation(customer["id"], limit=8) if m.get("id") != inbound["id"]]
+
+    result = agent_service.run_order_assistant_turn(
+        inbound["body"], None, customer, channel="whatsapp", conversation_history=conversation
+    )
+
+    return _update_inbound_message(
+        inbound["id"],
+        {
+            "customer_id": customer["id"],
+            "order_id": result.get("order_id"),
+            "intent": "NEW_ORDER_INQUIRY",
+            "ai_status": result["ai_status"],
+            "draft_notification_id": result["notification"]["id"] if result.get("notification") else None,
+        },
+    )
+
+
 def _process_and_draft(inbound: dict) -> dict:
     """Customer identification -> order matching, then hand off to
-    _draft_reply_and_update. Never raises: an identification/matching
-    failure still leaves the *original* inbound message intact with
-    ai_status left "failed", the same fail-open contract
-    _draft_reply_and_update independently provides for the step after.
+    _draft_reply_and_update — or, for a WhatsApp message continuing an
+    active assisted-order conversation, to process_inbound_whatsapp_
+    order_turn instead (see _is_continuing_whatsapp_order). Never
+    raises: an identification/matching failure still leaves the
+    *original* inbound message intact with ai_status left "failed", the
+    same fail-open contract _draft_reply_and_update independently
+    provides for the step after.
     """
     try:
         customer, _customer_ambiguous = _identify_customer(inbound["channel"], inbound["sender_identifier"])
@@ -225,6 +335,9 @@ def _process_and_draft(inbound: dict) -> dict:
             # real customer_id (notifications.customer_id is not-null) to
             # become a draft at all.
             return _update_inbound_message(inbound["id"], {"ai_status": "failed"})
+
+        if inbound["channel"] == "whatsapp" and _is_continuing_whatsapp_order(customer["id"], inbound["created_at"]):
+            return process_inbound_whatsapp_order_turn(inbound, customer)
 
         order, order_match_status = order_service.find_open_order_for_customer(customer["id"])
     except Exception:

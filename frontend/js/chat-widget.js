@@ -79,6 +79,31 @@ function getOrderIdFromUrl() {
   return new URLSearchParams(window.location.search).get("orderId");
 }
 
+// Website First (see agent_service._website_collection_link) means an AI
+// reply can now genuinely contain a real CakeCraft link the customer
+// should be able to click -- built with createElement/textContent for
+// each piece, never innerHTML with the raw AI text, matching this
+// project's existing "no innerHTML + interpolation" convention (see
+// e.g. admin-notifications.js's own top note) so nothing the model
+// writes can ever be interpreted as markup.
+const _URL_PATTERN = /(https?:\/\/[^\s]+)/g;
+
+function appendTextWithLinks(container, text) {
+  const parts = text.split(_URL_PATTERN);
+  parts.forEach((part) => {
+    if (/^https?:\/\//.test(part)) {
+      const link = document.createElement("a");
+      link.href = part;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = part;
+      container.appendChild(link);
+    } else if (part) {
+      container.appendChild(document.createTextNode(part));
+    }
+  });
+}
+
 function buildMessageBubble(role, text) {
   const bubble = document.createElement("div");
   bubble.className =
@@ -87,7 +112,7 @@ function buildMessageBubble(role, text) {
       : role === "order-success"
         ? "chat-widget__bubble chat-widget__bubble--order-success"
         : "chat-widget__bubble chat-widget__bubble--assistant";
-  bubble.textContent = text;
+  appendTextWithLinks(bubble, text);
   return bubble;
 }
 

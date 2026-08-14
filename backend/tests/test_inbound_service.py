@@ -803,6 +803,152 @@ def test_list_channel_messages_for_customer_filters_by_customer_and_channel():
     assert result == rows
 
 
+# --- WhatsApp assisted-ordering connector (Final Ordering Policy §12-14) ---
+# The minimum connector: reuses agent_service.run_order_assistant_turn
+# (same slot/confirmation/pricing logic chat already uses) and existing
+# inbound_messages/notifications state (inbound_messages.intent/order_id
+# as the "am I mid-order" signal) -- no new table, no new adapter, no
+# auto-send.
+
+
+def test_is_continuing_whatsapp_order_true_when_last_message_was_an_unfulfilled_order_inquiry():
+    query = _self_chaining_query_mock(SimpleNamespace(data=[{"intent": "NEW_ORDER_INQUIRY", "order_id": None}]))
+    with patch.object(inbound_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value = query
+        assert inbound_service._is_continuing_whatsapp_order("cust-1", "2026-01-01T00:00:00Z") is True
+
+
+def test_is_continuing_whatsapp_order_false_once_an_order_was_already_created():
+    query = _self_chaining_query_mock(SimpleNamespace(data=[{"intent": "NEW_ORDER_INQUIRY", "order_id": "order-1"}]))
+    with patch.object(inbound_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value = query
+        assert inbound_service._is_continuing_whatsapp_order("cust-1", "2026-01-01T00:00:00Z") is False
+
+
+def test_is_continuing_whatsapp_order_false_for_an_unrelated_prior_message():
+    query = _self_chaining_query_mock(SimpleNamespace(data=[{"intent": "PRODUCT_QUESTION", "order_id": None}]))
+    with patch.object(inbound_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value = query
+        assert inbound_service._is_continuing_whatsapp_order("cust-1", "2026-01-01T00:00:00Z") is False
+
+
+def test_is_continuing_whatsapp_order_false_with_no_prior_message():
+    query = _self_chaining_query_mock(SimpleNamespace(data=[]))
+    with patch.object(inbound_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value = query
+        assert inbound_service._is_continuing_whatsapp_order("cust-1", "2026-01-01T00:00:00Z") is False
+
+
+def test_process_inbound_whatsapp_order_turn_preserves_existing_customer_identity():
+    inbound = _fake_inbound_row(channel="whatsapp", body="Chocolate Ganache please")
+    mock_supabase, queries = _make_supabase_mock(
+        SimpleNamespace(data=[_fake_inbound_row(customer_id="cust-1", ai_status="drafted", draft_notification_id="notif-1")]),  # update
+    )
+    with (
+        patch.object(inbound_service, "supabase", mock_supabase),
+        patch.object(inbound_service, "get_whatsapp_conversation", return_value=[]),
+        patch.object(inbound_service, "agent_service") as mock_agent_service,
+    ):
+        mock_agent_service.run_order_assistant_turn.return_value = {
+            "reply": "Got it!", "draft": {}, "order_created": False, "order_id": None,
+            "notification": {"id": "notif-1"}, "ai_status": "drafted",
+        }
+        inbound_service.process_inbound_whatsapp_order_turn(inbound, FAKE_CUSTOMER)
+
+    call_kwargs = mock_agent_service.run_order_assistant_turn.call_args
+    assert call_kwargs.args[2] == FAKE_CUSTOMER  # the exact, already-identified customer -- never re-derived
+    assert call_kwargs.kwargs["channel"] == "whatsapp"
+
+    update_payload = queries[0].update.call_args.args[0]
+    assert update_payload["customer_id"] == "cust-1"
+    assert update_payload["intent"] == "NEW_ORDER_INQUIRY"  # keeps the continuation signal alive
+
+
+def test_process_inbound_whatsapp_order_turn_records_order_id_so_continuation_stops():
+    inbound = _fake_inbound_row(channel="whatsapp", body="Yes, create my order.")
+    mock_supabase, queries = _make_supabase_mock(
+        SimpleNamespace(data=[_fake_inbound_row(order_id="order-1", ai_status="drafted")]),
+    )
+    with (
+        patch.object(inbound_service, "supabase", mock_supabase),
+        patch.object(inbound_service, "get_whatsapp_conversation", return_value=[]),
+        patch.object(inbound_service, "agent_service") as mock_agent_service,
+    ):
+        mock_agent_service.run_order_assistant_turn.return_value = {
+            "reply": "Order created!", "draft": {}, "order_created": True, "order_id": "order-1",
+            "notification": {"id": "notif-2"}, "ai_status": "drafted",
+        }
+        inbound_service.process_inbound_whatsapp_order_turn(inbound, FAKE_CUSTOMER)
+
+    update_payload = queries[0].update.call_args.args[0]
+    assert update_payload["order_id"] == "order-1"  # _is_continuing_whatsapp_order will see this and stop
+
+
+def test_process_and_draft_routes_a_continuing_whatsapp_message_to_the_order_assistant():
+    inbound = _fake_inbound_row(channel="whatsapp", sender_identifier="+33612345678")
+    with (
+        patch.object(inbound_service, "customer_service") as mock_customer_service,
+        patch.object(inbound_service, "_is_continuing_whatsapp_order", return_value=True),
+        patch.object(inbound_service, "process_inbound_whatsapp_order_turn") as mock_order_turn,
+        patch.object(inbound_service, "_draft_reply_and_update") as mock_normal_reply,
+    ):
+        mock_customer_service.find_customer_by_phone.return_value = (FAKE_CUSTOMER, False)
+        mock_order_turn.return_value = inbound
+        inbound_service._process_and_draft(inbound)
+
+    mock_order_turn.assert_called_once_with(inbound, FAKE_CUSTOMER)
+    mock_normal_reply.assert_not_called()  # not the normal path -- no duplicate handling
+
+
+def test_process_and_draft_uses_the_normal_path_when_not_continuing_an_order():
+    # Regression: existing non-order WhatsApp behavior (a plain question,
+    # or the very first order-related message, which still needs the
+    # normal classify-and-draft path for its Website First framing)
+    # remains completely intact.
+    inbound = _fake_inbound_row(channel="whatsapp", sender_identifier="+33612345678")
+    with (
+        patch.object(inbound_service, "customer_service") as mock_customer_service,
+        patch.object(inbound_service, "order_service") as mock_order_service,
+        patch.object(inbound_service, "_is_continuing_whatsapp_order", return_value=False),
+        patch.object(inbound_service, "process_inbound_whatsapp_order_turn") as mock_order_turn,
+        patch.object(inbound_service, "_draft_reply_and_update") as mock_normal_reply,
+    ):
+        mock_customer_service.find_customer_by_phone.return_value = (FAKE_CUSTOMER, False)
+        mock_order_service.find_open_order_for_customer.return_value = (None, "none")
+        mock_normal_reply.return_value = inbound
+        inbound_service._process_and_draft(inbound)
+
+    mock_normal_reply.assert_called_once_with(inbound, FAKE_CUSTOMER, None, "none")
+    mock_order_turn.assert_not_called()
+
+
+def test_whatsapp_order_turn_never_touches_a_communication_adapter_or_send():
+    # No automatic outbound send: process_inbound_whatsapp_order_turn's
+    # only side effects are agent_service.run_order_assistant_turn (which
+    # itself only ever drafts, see that function's own docstring) and the
+    # inbound_messages update -- never notification_service.send() or a
+    # Communication Adapter, so no real WhatsApp message can go out
+    # merely from processing an inbound one.
+    inbound = _fake_inbound_row(channel="whatsapp", body="What sizes do you have?")
+    mock_supabase, _queries = _make_supabase_mock(SimpleNamespace(data=[_fake_inbound_row()]))
+    with (
+        patch.object(inbound_service, "supabase", mock_supabase),
+        patch.object(inbound_service, "get_whatsapp_conversation", return_value=[]),
+        patch.object(inbound_service, "agent_service") as mock_agent_service,
+    ):
+        mock_agent_service.run_order_assistant_turn.return_value = {
+            "reply": "...", "draft": {}, "order_created": False, "order_id": None,
+            "notification": {"id": "notif-1"}, "ai_status": "drafted",
+        }
+        inbound_service.process_inbound_whatsapp_order_turn(inbound, FAKE_CUSTOMER)
+
+    # run_order_assistant_turn is the ONLY agent_service function this
+    # connector ever calls -- proven by mock_calls having exactly one
+    # entry, not just that this one particular call happened.
+    assert len(mock_agent_service.mock_calls) == 1
+    mock_agent_service.run_order_assistant_turn.assert_called_once()
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

@@ -1767,6 +1767,76 @@ def test_ordering_fix_does_not_affect_halal_handling():
     assert "not religiously certified" in result["answer"].lower()
 
 
+# --- Website First (Final Customer Assisted Ordering Policy, Chat + WhatsApp) -
+# "Website first, assisted ordering second": a real, existing collection
+# link (never invented) is provided for the customer's occasion, and the
+# customer is always told they have both choices -- never that ordering
+# is ONLY self-service. Applied via the one shared prompt
+# (_classify_and_respond) both answer_customer_question (chat) and
+# draft_reply_to_inbound_message (email/WhatsApp) already call, so this
+# is one change covering every channel, not a per-channel copy.
+
+
+def test_website_collection_link_matches_a_real_category():
+    link = agent_service._website_collection_link("I'd like to order a birthday cake for 20 people")
+    assert link == "https://cakecraft-studio-production.up.railway.app/templates.html?collection=Birthday"
+
+
+def test_website_collection_link_falls_back_to_general_collections_when_no_occasion_is_named():
+    link = agent_service._website_collection_link("Can I order a chocolate cake?")
+    assert link == "https://cakecraft-studio-production.up.railway.app/index.html#collections"
+
+
+def test_new_order_inquiry_prompt_includes_the_real_website_link_not_an_invented_one():
+    fake_response = _fake_claude_json_response(
+        intent="NEW_ORDER_INQUIRY",
+        subject="Re: your birthday cake",
+        body="Recommend the website; you can also order here.",
+    )
+    fake_chunks = [{"title": "Ordering Guide", "content": "Customers can browse collections and use the Designer.", "source_file": "ordering.md"}]
+
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
+
+        agent_service.answer_customer_question("I'd like to order a birthday cake", _FAKE_INBOUND_CUSTOMER, None)
+
+    sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "templates.html?collection=Birthday" in sent_prompt
+    assert "Never say ordering is ONLY" in sent_prompt
+
+
+def test_website_first_prompt_also_used_for_inbound_whatsapp_email_replies():
+    # Same shared prompt as chat -- proves "one change covers every
+    # channel" for real, not just by code inspection: draft_reply_to_
+    # inbound_message (the function real inbound WhatsApp/email messages
+    # go through) gets the identical NEW_ORDER_INQUIRY instruction.
+    fake_response = _fake_claude_json_response(intent="NEW_ORDER_INQUIRY", subject="Re: order", body="...")
+    fake_chunks = [{"title": "Ordering Guide", "content": "...", "source_file": "ordering.md"}]
+
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
+
+        agent_service.draft_reply_to_inbound_message(
+            _fake_inbound_message(channel="whatsapp", body="I want to order a wedding cake"),
+            _FAKE_INBOUND_CUSTOMER, None,
+        )
+
+    sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "templates.html?collection=Wedding" in sent_prompt
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:
