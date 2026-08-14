@@ -46,6 +46,11 @@ class ChatOrderDraft(BaseModel):
     fillingId: str | None = None
     frostingId: str | None = None
     phone: str | None = None
+    # Free text, e.g. "ready by tomorrow?" -- never required, never id-
+    # validated, just carried through to the created order's `notes`
+    # field (see agent_service._order_assistant_prompt's own note on
+    # rush/availability questions never being promised, only recorded).
+    specialRequestNote: str | None = None
 
 
 class ChatOrderRequest(BaseModel):

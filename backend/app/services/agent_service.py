@@ -1092,7 +1092,12 @@ def _looks_like_confirmation(message: str) -> bool:
 
 def _normalize_order_draft(draft: dict | None) -> dict:
     draft = draft or {}
-    return {field: (draft.get(field) or None) for field in _ORDER_DRAFT_FIELDS}
+    normalized = {field: (draft.get(field) or None) for field in _ORDER_DRAFT_FIELDS}
+    # Free text, never id-validated, never required for confirmation --
+    # rides alongside the real slots the same way `phone` does, see
+    # run_order_assistant_turn's own note on rush/availability questions.
+    normalized["specialRequestNote"] = draft.get("specialRequestNote") or None
+    return normalized
 
 
 # Guest count -> size, for the /chat/ask -> /chat/order handoff (Step C):
@@ -1116,6 +1121,39 @@ def _size_for_guest_count(count: int, cake_sizes: list[dict]) -> str | None:
         low, high = size.get("servings_min"), size.get("servings_max")
         if low is not None and high is not None and low <= count <= high:
             return size["id"]
+    return None
+
+
+# Bug: a size already deterministically established (from guest count, or
+# from an earlier turn) was silently regressing to a different-but-real
+# size id on a later turn (e.g. "Large" -> "Medium" while the customer was
+# only discussing flavor/price). Root cause: run_order_assistant_turn's
+# merge loop trusted ANY structurally-valid id Claude returned for
+# cakeSizeId every turn -- and since "ORDER SO FAR" only shows the size by
+# *name* (see _format_order_draft), Claude has to blind-reverse-map that
+# name back to an id from the catalog block on every single turn with no
+# persistent anchor forcing it to reuse the exact id already assigned; a
+# turn where the message itself says nothing about size gives Claude no
+# fresh textual cue for that reverse mapping, unlike design/flavor/
+# filling/frosting which the customer typically re-names directly when
+# selecting them. Fix: cakeSizeId is no longer trusted from Claude once a
+# size is already known -- it can only change when *this* turn's own
+# message contains explicit evidence of a change: a real size named
+# outright, or a guest count that maps to a different real size range.
+def _explicit_size_change(message: str, cake_sizes: list[dict]) -> str | None:
+    """Returns a new size id only when `message` itself is clear evidence
+    the customer is naming/changing the size (by name, or via a guest
+    count). None means "no signal this turn" -- the caller must leave
+    whatever size is already known untouched, never fall back to
+    Claude's own cakeSizeId field for that case.
+    """
+    lowered = message.lower()
+    for size in cake_sizes:  # ponytail: first catalog-order name match, not text-order -- fine for one stated size per turn
+        if re.search(rf"\b{re.escape(size['name'].lower())}\b", lowered):
+            return size["id"]
+    guest_count = _extract_guest_count(message)
+    if guest_count is not None:
+        return _size_for_guest_count(guest_count, cake_sizes)
     return None
 
 
@@ -1179,6 +1217,8 @@ def _format_order_draft(draft: dict, names: dict[str, str]) -> str:
             lines.append(f"  phone number: {value}")
         else:
             lines.append(f"  {_ORDER_DRAFT_FIELD_LABELS[field]}: {names.get(value, value)}")
+    if draft.get("specialRequestNote"):
+        lines.append(f"  special request noted: {draft['specialRequestNote']}")
     return "\n".join(lines)
 
 
@@ -1232,22 +1272,31 @@ address each one, briefly, rather than at length; keep "reply" concise.
 4. If they ask about cost/price/how much, set "asksAboutPrice": true and do NOT state a specific number
    yourself anywhere in "reply" — the application calculates and appends the real price separately, from
    actual catalog data. Otherwise false.
-5. Decide confirmedNow: true ONLY if the customer's message is an explicit "yes, place/confirm/create the
+5. If they ask how/when they can pay, or whether they can pay now: this chat has NO payment, credit card,
+   or checkout capability — do not claim one exists or that you'll "walk them through checkout". Say
+   payment is arranged with the bakery after the order is placed (at pickup/delivery, or as the bakery
+   otherwise arranges), never anything more specific than that.
+6. If they ask about rush timing or being ready by a specific date, do NOT promise or guess availability —
+   say that needs the bakery to confirm directly, and set "specialRequestNote" to a short (<=200 char)
+   note of what they asked (e.g. "customer asked if ready by tomorrow") so the bakery sees it. This must
+   never change any other field above.
+7. Decide confirmedNow: true ONLY if the customer's message is an explicit "yes, place/confirm/create the
    order" (not just answering a question about what's in it, and not a vague acknowledgment like "looks
    good" or "great") AND every field above is already known (including anything you just extracted from
    this message). Otherwise false.
-6. Write "reply":
+8. Write "reply":
    - If confirmedNow is true: a short, warm confirmation (the application creates the order separately —
      do not claim it's created yet).
-   - Else: acknowledge whatever you just learned, answer any design/option/custom-request question asked
-     (per #2/#3), and ask ONLY for the specific field(s) still missing — never re-ask for something already
-     known above. If nothing is missing, summarize the selections by name (design, size, flavor, filling,
-     frosting) and ask for explicit confirmation instead — do not state a price number here, the
-     application appends the real one itself (see #4).
-7. Respond with ONLY this JSON object, nothing else:
+   - Else: acknowledge whatever you just learned, answer any design/option/custom-request/payment/timing
+     question asked (per #2/#3/#5/#6), and ask ONLY for the specific field(s) still missing — never re-ask
+     for something already known above. If nothing is missing, summarize the selections by name (design,
+     size, flavor, filling, frosting) and ask for explicit confirmation instead — do not state a price
+     number here, the application appends the real one itself (see #4).
+9. Respond with ONLY this JSON object, nothing else:
 {{"templateId": "..." or null, "cakeSizeId": "..." or null, "flavorId": "..." or null,
 "fillingId": "..." or null, "frostingId": "..." or null, "phone": "..." or null,
-"confirmedNow": true or false, "asksAboutPrice": true or false, "reply": "..."}}"""
+"specialRequestNote": "..." or null, "confirmedNow": true or false, "asksAboutPrice": true or false,
+"reply": "..."}}"""
 
 
 def _format_order_conversation_history(messages: list[dict] | None) -> str | None:
@@ -1403,6 +1452,8 @@ def run_order_assistant_turn(
 
     updated = dict(current)
     for field in _ORDER_DRAFT_FIELDS:
+        if field == "cakeSizeId":
+            continue  # deterministic -- handled below, Claude's own candidate is never trusted directly
         candidate = parsed.get(field)
         if not isinstance(candidate, str) or not candidate.strip():
             continue
@@ -1411,6 +1462,25 @@ def run_order_assistant_turn(
         elif candidate in valid_ids[field]:
             updated[field] = candidate
         # else: an id that isn't real -- ignored, never trusted, previous value kept.
+
+    # Size regression fix (see _explicit_size_change's own note): only
+    # ever changes when *this* message itself is explicit evidence of a
+    # change. Falls back to Claude's own (still id-validated) candidate
+    # only when nothing is known yet and there's no explicit signal --
+    # preserves the original "Claude extracts freely, Python validates"
+    # flexibility for a first, natural-language size mention that isn't a
+    # literal catalog name or guest count (e.g. "the biggest one").
+    size_override = _explicit_size_change(message, options["cake_sizes"])
+    if size_override:
+        updated["cakeSizeId"] = size_override
+    elif not updated.get("cakeSizeId"):
+        candidate = parsed.get("cakeSizeId")
+        if isinstance(candidate, str) and candidate in valid_ids["cakeSizeId"]:
+            updated["cakeSizeId"] = candidate
+
+    note_candidate = parsed.get("specialRequestNote")
+    if isinstance(note_candidate, str) and note_candidate.strip():
+        updated["specialRequestNote"] = note_candidate.strip()
 
     all_filled = all(updated[field] for field in _ORDER_DRAFT_FIELDS)
     confirmed = bool(parsed.get("confirmedNow")) and all_filled and _looks_like_confirmation(message)
@@ -1446,6 +1516,14 @@ def run_order_assistant_turn(
                     "customer_name": customer.get("name") or "",
                     "customer_phone": updated["phone"],
                     "customer_email": customer["email"],
+                    # order_service.create_order unconditionally reads
+                    # order["notes"] -- omitting this key entirely was the
+                    # exact KeyError('notes') that made every chat-assisted
+                    # order fail (caught by the except below, surfaced to
+                    # the customer as "something went wrong"). None is a
+                    # real, valid value (nullable column, same as the
+                    # Designer flow's blank-notes case).
+                    "notes": updated.get("specialRequestNote"),
                 }
             )
         except Exception:

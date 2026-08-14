@@ -33,9 +33,24 @@ _OPTIONS = {
     ],
     "flavors": [{"id": "flav-1", "name": "Chocolate"}],
     "fillings": [{"id": "fill-1", "name": "Chocolate Ganache"}],
-    "frostings": [{"id": "frost-1", "name": "Buttercream"}],
+    "frostings": [{"id": "frost-1", "name": "Buttercream"}, {"id": "frost-2", "name": "Dark Chocolate Ganache"}],
 }
 _LARGE_SIZE_ID = "size-3"
+_MEDIUM_SIZE_ID = "size-2"
+
+# The exact reported-bug configuration: Chocolate Confetti Celebration /
+# Large / Chocolate / Chocolate Ganache / Dark Chocolate Ganache -- a real,
+# valid catalog combination (confirmed against production data before this
+# fix, see the commit message), used by the size-regression and
+# create_order regression tests below.
+_REPORTED_BUG_DRAFT = {
+    "templateId": "tpl-2",
+    "cakeSizeId": _LARGE_SIZE_ID,
+    "flavorId": "flav-1",
+    "fillingId": "fill-1",
+    "frostingId": "frost-2",
+    "phone": "+972545446601",
+}
 
 _COMPLETE_DRAFT = {
     "templateId": "tpl-1",
@@ -114,12 +129,19 @@ def test_missing_fields_are_requested_no_order_created():
 
     assert result["order_created"] is False
     assert result["order_id"] is None
-    assert result["draft"] == {"templateId": None, "cakeSizeId": None, "flavorId": None, "fillingId": None, "frostingId": None, "phone": None}
+    assert result["draft"] == {
+        "templateId": None, "cakeSizeId": None, "flavorId": None, "fillingId": None,
+        "frostingId": None, "phone": None, "specialRequestNote": None,
+    }
     assert "size" in result["reply"].lower() or "flavor" in result["reply"].lower()
     mock_create_order.assert_not_called()
 
 
 def test_partial_extraction_updates_draft_and_still_asks_for_the_rest():
+    # cakeSizeId is deterministic (see _explicit_size_change): the customer
+    # literally said "medium" here, so Python resolves the real Medium id
+    # itself -- Claude's own (here mismatched, size-1/Small) cakeSizeId
+    # candidate is never trusted directly, by design (see Bug #1's fix).
     result, mock_create_order, _, _sb = _run(
         "I'd like the Classic Vanilla in medium",
         None,
@@ -127,7 +149,7 @@ def test_partial_extraction_updates_draft_and_still_asks_for_the_rest():
     )
 
     assert result["draft"]["templateId"] == "tpl-1"
-    assert result["draft"]["cakeSizeId"] == "size-1"
+    assert result["draft"]["cakeSizeId"] == "size-2"  # real Medium, from the customer's own word, not Claude's id
     assert result["draft"]["flavorId"] is None  # still missing, not guessed
     mock_create_order.assert_not_called()
 
@@ -197,11 +219,18 @@ def test_confirmed_complete_order_calls_the_existing_order_service():
             "customer_name": "Jane Doe",
             "customer_phone": "+15551234567",
             "customer_email": "jane@example.com",
+            # Regression: create_order() requires a "notes" key (KeyError
+            # otherwise -- see Bug #2's fix); None is the real, valid,
+            # "nothing special noted" value.
+            "notes": None,
         }
     )
     mock_notify.assert_called_once()
     # Draft is cleared once the order actually exists -- nothing left to collect.
-    assert result["draft"] == {"templateId": None, "cakeSizeId": None, "flavorId": None, "fillingId": None, "frostingId": None, "phone": None}
+    assert result["draft"] == {
+        "templateId": None, "cakeSizeId": None, "flavorId": None, "fillingId": None,
+        "frostingId": None, "phone": None, "specialRequestNote": None,
+    }
 
 
 def test_created_order_associated_with_the_correct_customer():
@@ -498,7 +527,7 @@ def test_failure_path_preserves_a_non_empty_incoming_draft():
     assert result["ai_status"] == "failed"
     assert result["reply"]
     assert result["order_created"] is False
-    assert result["draft"] == partial_draft  # nothing lost
+    assert result["draft"] == {**partial_draft, "specialRequestNote": None}  # nothing lost
     mock_create_order.assert_not_called()
 
 
@@ -618,6 +647,217 @@ def test_conversation_history_is_folded_into_the_prompt_for_whatsapp():
 
     sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
     assert "I want a birthday cake for 20 people" in sent_prompt
+
+
+# --- Production bug fix: size regression, create_order KeyError, payment
+# and rush-availability hallucination (see the commit message for the full
+# live reproduction of each). All four fixes share the exact reported,
+# valid catalog configuration (_REPORTED_BUG_DRAFT) so these tests double
+# as a faithful replay of the real conversation.
+
+
+def test_large_survives_a_design_selection_even_if_claude_returns_medium():
+    draft = {**_REPORTED_BUG_DRAFT, "templateId": None, "flavorId": None, "fillingId": None, "frostingId": None, "phone": None}
+    result, _, _, _sb = _run(
+        "I'll go with the Chocolate Confetti Celebration",
+        draft,
+        {
+            "templateId": "tpl-2",
+            "cakeSizeId": _MEDIUM_SIZE_ID,  # simulates Claude mis-recalling the size on this turn
+            "reply": "Great choice! What flavor, filling, and frosting?",
+        },
+    )
+    assert result["draft"]["cakeSizeId"] == _LARGE_SIZE_ID
+    assert result["draft"]["templateId"] == "tpl-2"
+
+
+def test_large_survives_flavor_filling_frosting_selection_even_if_claude_returns_medium():
+    draft = {**_REPORTED_BUG_DRAFT, "flavorId": None, "fillingId": None, "frostingId": None, "phone": None}
+    result, _, _, _sb = _run(
+        "Chocolate, Chocolate Ganache, and Dark Chocolate Ganache please",
+        draft,
+        {
+            "flavorId": "flav-1", "fillingId": "fill-1", "frostingId": "frost-2",
+            "cakeSizeId": _MEDIUM_SIZE_ID,
+            "reply": "Got it -- and your phone number?",
+        },
+    )
+    assert result["draft"]["cakeSizeId"] == _LARGE_SIZE_ID
+    assert result["draft"]["flavorId"] == "flav-1"
+    assert result["draft"]["fillingId"] == "fill-1"
+    assert result["draft"]["frostingId"] == "frost-2"
+
+
+def test_large_survives_the_exact_reported_price_and_availability_question():
+    # The exact turn that regressed size in production: everything already
+    # selected, customer asks about price/availability -- the message says
+    # nothing about size at all -- yet Claude's own cakeSizeId candidate
+    # came back Medium (a real id, so the old code trusted it outright).
+    draft = {**_REPORTED_BUG_DRAFT, "phone": None}
+    result, mock_create_order, _, _sb = _run(
+        "what is the price and can it be ready tomorrow?",
+        draft,
+        {
+            "cakeSizeId": _MEDIUM_SIZE_ID,
+            "asksAboutPrice": True,
+            "specialRequestNote": "customer asked if ready by tomorrow",
+            "reply": "Sure thing!",
+        },
+    )
+    assert result["draft"]["cakeSizeId"] == _LARGE_SIZE_ID  # never regressed to Medium
+    expected_price = agent_service._compute_order_price(_REPORTED_BUG_DRAFT, _TEMPLATES, _OPTIONS)
+    assert f"${expected_price:.2f}" in result["reply"]
+    assert "$102.00" not in result["reply"]  # the wrong, Medium-based figure from the real bug report
+    assert result["draft"]["specialRequestNote"] == "customer asked if ready by tomorrow"
+    mock_create_order.assert_not_called()  # an informational question must never create an order
+
+
+def test_compute_order_price_for_the_reported_configuration_uses_large_not_medium():
+    large_price = agent_service._compute_order_price(_REPORTED_BUG_DRAFT, _TEMPLATES, _OPTIONS)
+    medium_price = agent_service._compute_order_price({**_REPORTED_BUG_DRAFT, "cakeSizeId": _MEDIUM_SIZE_ID}, _TEMPLATES, _OPTIONS)
+    assert large_price != medium_price
+    assert large_price == _TEMPLATES[1]["base_price"] + _OPTIONS["cake_sizes"][2]["price_adjustment"]
+
+
+def test_confirmation_and_phone_in_the_same_message_creates_the_order_when_everything_else_is_known():
+    # Confirmation Gate policy's own named example.
+    draft = {**_REPORTED_BUG_DRAFT, "phone": None}
+    result, mock_create_order, _, _sb = _run(
+        "confirmed and my phone number is: +972545446601",
+        draft,
+        {"phone": "+972545446601", "confirmedNow": True, "reply": "..."},
+    )
+    assert result["order_created"] is True
+    mock_create_order.assert_called_once()
+    assert mock_create_order.call_args.args[0]["customer_phone"] == "+972545446601"
+
+
+def test_local_phone_format_normalized_by_claude_passes_through_to_create_order():
+    # There is no dedicated phone-normalization utility in this codebase --
+    # Claude itself normalizes a local Israeli mobile number to E.164
+    # (matching the bug report's own observation that this part already
+    # worked correctly in production); Python trusts whatever string Claude
+    # returns for phone verbatim, unchanged by this fix. The message also
+    # restates "20 people", which independently reinforces (not regresses)
+    # the already-locked Large size.
+    draft = {**_REPORTED_BUG_DRAFT, "phone": None}
+    result, mock_create_order, _, _sb = _run(
+        "Yep, for 20 people and my phone number is 0545446601",
+        draft,
+        {"phone": "+972545446601", "confirmedNow": True, "reply": "..."},
+    )
+    assert result["order_created"] is True
+    assert mock_create_order.call_args.args[0]["customer_phone"] == "+972545446601"
+    assert mock_create_order.call_args.args[0]["cake_size_id"] == _LARGE_SIZE_ID  # never regressed to Medium
+
+
+def test_full_valid_confirmed_payload_reaches_create_order_exactly_once():
+    result, mock_create_order, mock_notify, _sb = _run(
+        "yes and confirmed. Do I pay now?",
+        _REPORTED_BUG_DRAFT,
+        {"confirmedNow": True, "reply": "..."},
+    )
+    assert result["order_created"] is True
+    assert result["order_id"] == "order-1"
+    mock_create_order.assert_called_once_with(
+        {
+            "template_id": "tpl-2",
+            "cake_size_id": _LARGE_SIZE_ID,
+            "flavor_id": "flav-1",
+            "filling_id": "fill-1",
+            "frosting_id": "frost-2",
+            "customer_name": "Jane Doe",
+            "customer_phone": "+972545446601",
+            "customer_email": "jane@example.com",
+            "notes": None,
+        }
+    )
+    mock_notify.assert_called_once()
+
+
+def test_reported_create_order_failure_is_reproduced_and_fixed():
+    # Bug #2's exact root cause: order_service.create_order() unconditionally
+    # reads order["notes"], but the payload built above never included that
+    # key -- a real KeyError('notes'), caught by run_order_assistant_turn's
+    # broad except, surfaced as "something went wrong creating your order"
+    # (see this file's _run harness for every OTHER test, which mocks
+    # create_order entirely -- this one deliberately lets the REAL function
+    # run, so it would have failed against the pre-fix code).
+    with (
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.template_service, "get_active_templates", return_value=_TEMPLATES),
+        patch.object(agent_service.designer_service, "get_designer_options", return_value=_OPTIONS),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+        patch.object(agent_service.order_service, "get_template_by_id", return_value=_TEMPLATES[1]),
+        patch.object(agent_service.order_service, "get_designer_options", return_value=_OPTIONS),
+        patch.object(agent_service.order_service, "find_or_create_customer", return_value="cust-1"),
+        patch.object(agent_service.order_service, "supabase") as mock_order_supabase,
+        patch.object(agent_service.order_service, "get_order_by_id", return_value={"id": "order-real-1", "status": "pending"}),
+        patch.object(agent_service.notification_service, "create_notification_for_order_event"),
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = _fake_claude_response(confirmedNow=True)
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
+        mock_order_supabase.table.return_value.insert.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": "order-real-1"}]
+        )
+
+        result = agent_service.run_order_assistant_turn(
+            "yes and confirmed. Do I pay now?", _REPORTED_BUG_DRAFT, _CUSTOMER,
+        )
+
+    assert result["order_created"] is True
+    assert result["order_id"] == "order-real-1"
+    assert "order-real-1" in result["reply"]
+
+
+def test_failed_order_creation_preserves_the_full_reported_draft_untouched():
+    result, mock_create_order, _, _sb = _run(
+        "yes and confirmed. Do I pay now?",
+        _REPORTED_BUG_DRAFT,
+        {"confirmedNow": True, "reply": "..."},
+        create_order_side_effect=RuntimeError("transient DB error"),
+    )
+    assert result["order_created"] is False
+    assert result["draft"] == {**_REPORTED_BUG_DRAFT, "specialRequestNote": None}
+    mock_create_order.assert_called_once()
+
+
+def test_repeated_confirmation_after_success_does_not_create_a_duplicate_order():
+    result1, mock_create_order_1, _, _sb1 = _run(
+        "yes and confirmed",
+        _REPORTED_BUG_DRAFT,
+        {"confirmedNow": True, "reply": "..."},
+    )
+    assert result1["order_created"] is True
+    empty_draft = result1["draft"]  # reset once the order actually exists
+
+    result2, mock_create_order_2, _, _sb2 = _run(
+        "yes confirmed again",
+        empty_draft,
+        {"confirmedNow": True, "reply": "..."},
+    )
+    assert result2["order_created"] is False
+    mock_create_order_2.assert_not_called()
+
+
+def test_prompt_forbids_claiming_in_chat_payment_or_checkout():
+    catalog_text, _names = agent_service._build_order_catalog(_TEMPLATES, _OPTIONS)
+    prompt = agent_service._order_assistant_prompt(
+        "how can I pay? can I pay now?", agent_service._normalize_order_draft(None), catalog_text, ""
+    )
+    lowered = " ".join(prompt.lower().split())  # collapse the prompt's own line wraps for a stable substring check
+    assert "no payment, credit card, or checkout capability" in lowered
+    assert "payment is arranged with the bakery" in lowered
+
+
+def test_prompt_forbids_promising_rush_availability_and_captures_it_as_a_note():
+    catalog_text, _names = agent_service._build_order_catalog(_TEMPLATES, _OPTIONS)
+    prompt = agent_service._order_assistant_prompt(
+        "can it be ready tomorrow?", agent_service._normalize_order_draft(None), catalog_text, ""
+    )
+    assert "do not promise or guess availability" in prompt.lower()
+    assert "specialrequestnote" in prompt.lower()
 
 
 def run_all() -> None:
