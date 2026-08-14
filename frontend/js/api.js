@@ -54,6 +54,33 @@ async function createOrder(order) {
   return response.json();
 }
 
+// Minimal, unauthenticated, no-PII order view -- backs the payment page
+// (see app/schemas/order.py's OrderPublicView for exactly what this
+// returns and why).
+async function getOrder(orderId) {
+  const response = await fetch(`${API_BASE_URL}/orders/${encodeURIComponent(orderId)}`);
+
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+
+  return response.json();
+}
+
+// Simulated/demo payment -- no amount is ever sent from here; the backend
+// always charges (simulated) orders.total_price, see payment_service.py.
+async function payOrder(orderId) {
+  const response = await fetch(`${API_BASE_URL}/orders/${encodeURIComponent(orderId)}/pay`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+
+  return response.json();
+}
+
 async function askChat(payload) {
   const response = await fetch(`${API_BASE_URL}/chat/ask`, {
     method: "POST",

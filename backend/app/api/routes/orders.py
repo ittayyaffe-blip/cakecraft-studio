@@ -1,9 +1,15 @@
 import logging
+import uuid
 
 from fastapi import APIRouter, HTTPException
 
-from app.schemas.order import OrderCreateRequest, OrderCreateResponse
-from app.services import inbound_service, notification_service, order_service
+from app.schemas.order import (
+    OrderCreateRequest,
+    OrderCreateResponse,
+    OrderPaymentResponse,
+    OrderPublicView,
+)
+from app.services import inbound_service, notification_service, order_service, payment_service
 from app.services.order_service import create_order
 
 logger = logging.getLogger(__name__)
@@ -56,3 +62,55 @@ def create_order_route(order: OrderCreateRequest):
         logger.exception("Failed to process order-note inbound message for order=%s", order_id)
 
     return {"orderId": order_id}
+
+
+@router.get("/{order_id}", response_model=OrderPublicView)
+def get_order_route(order_id: uuid.UUID):
+    """Minimal, unauthenticated order view -- same unauthenticated posture
+    as every other route in this file (see OrderPublicView's own note).
+    Backs the Website payment page and any other surface that only has an
+    order id; never returns customer PII.
+    """
+    order_id_str = str(order_id)
+    order = order_service.get_order_by_id(order_id_str)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    payment = payment_service.get_payment_for_order(order_id_str)
+    template = order.get("cake_templates") or {}
+    return {
+        "orderId": order["id"],
+        "templateName": template.get("name"),
+        "configuration": order.get("configuration") or {},
+        "totalPrice": order["total_price"],
+        "orderStatus": order["status"],
+        "paymentStatus": payment["status"] if payment else "pending",
+    }
+
+
+@router.post("/{order_id}/pay", response_model=OrderPaymentResponse)
+def pay_order_route(order_id: uuid.UUID):
+    """Simulated/demo payment -- see payment_service.simulate_payment's
+    own docstring for the full idempotency/authoritative-amount contract.
+    The ONE endpoint Website, Chat, and WhatsApp all call; no amount is
+    ever accepted here -- it's always orders.total_price.
+    """
+    order_id_str = str(order_id)
+    try:
+        result = payment_service.simulate_payment(order_id_str)
+    except payment_service.OrderNotFoundError:
+        raise HTTPException(status_code=404, detail="Order not found")
+    except payment_service.OrderNotPayableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to process payment for order=%s", order_id_str)
+        raise HTTPException(status_code=500, detail="Failed to process payment")
+
+    payment = result["payment"]
+    return {
+        "paymentStatus": payment["status"],
+        "orderStatus": result["order_status"],
+        "amount": payment["amount"],
+        "simulatedReference": payment.get("simulated_reference"),
+        "paidAt": payment.get("paid_at"),
+    }

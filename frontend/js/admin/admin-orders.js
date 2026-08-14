@@ -154,6 +154,21 @@ function initPaginationButtons() {
 
 // --- Order detail drawer ----------------------------------------------------
 
+// Simulated/demo payment status label -- see app/services/payment_service.py's
+// own docstring on why this is a demo-only system (no real card data, no real
+// provider, anywhere in this project). `order.payment` is null until the
+// customer's first Pay Now attempt (see payment_service.get_or_create_payment).
+const PAYMENT_STATUS_LABELS = {
+  pending: "Pending",
+  paid: "Paid (SIMULATED / DEMO)",
+  failed: "Failed",
+};
+
+function formatPaymentStatus(payment) {
+  if (!payment) return "Not yet initiated";
+  return PAYMENT_STATUS_LABELS[payment.status] || payment.status;
+}
+
 function appendDetailRow(container, label, value) {
   const row = document.createElement("div");
   row.className = "admin-detail-row";
@@ -180,6 +195,11 @@ function renderOrderDetail(order) {
   appendDetailRow(body, "Phone", order.customers ? order.customers.phone : "—");
   appendDetailRow(body, "Cake", order.cake_templates ? order.cake_templates.name : "—");
   appendDetailRow(body, "Total", formatCurrency(order.total_price));
+  appendDetailRow(body, "Payment", formatPaymentStatus(order.payment));
+  if (order.payment && order.payment.status === "paid") {
+    appendDetailRow(body, "Paid At", formatDateTime(order.payment.paid_at));
+    appendDetailRow(body, "Simulated Reference", order.payment.simulated_reference || "—");
+  }
   appendDetailRow(body, "Placed", formatDateTime(order.created_at));
   appendDetailRow(body, "Pickup Date", order.pickup_date || "Not scheduled yet");
   appendDetailRow(body, "Pickup Time", order.pickup_time || "Not scheduled yet");

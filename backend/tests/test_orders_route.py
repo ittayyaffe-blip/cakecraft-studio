@@ -11,10 +11,12 @@ module in this project uses) so the route's own real orchestration logic
 runs for real.
 """
 
+import uuid
 from unittest.mock import patch
 
 from app.api.routes import orders
 from app.schemas.order import OrderCreateRequest
+from app.services import payment_service
 
 _REQUEST = OrderCreateRequest(
     template_id="template-1",
@@ -114,6 +116,108 @@ def test_create_order_route_returns_404_when_template_not_found():
             assert getattr(exc, "status_code", None) == 404
         else:
             raise AssertionError("expected an HTTPException(404) when create_order returns None")
+
+
+# --- GET /orders/{id} -- minimal public order view (payment.html) ----------
+
+_UUID = uuid.UUID("11111111-1111-1111-1111-111111111111")
+
+_ORDER_FOR_PUBLIC_VIEW = {
+    "id": str(_UUID),
+    "status": "pending",
+    "total_price": 152.0,
+    "configuration": {"cakeSize": {"name": "Large"}, "flavor": {"name": "Chocolate"}},
+    "cake_templates": {"name": "Chocolate Confetti Celebration"},
+}
+
+
+def test_get_order_route_returns_public_view_with_pending_payment():
+    with (
+        patch.object(orders.order_service, "get_order_by_id", return_value=_ORDER_FOR_PUBLIC_VIEW),
+        patch.object(orders.payment_service, "get_payment_for_order", return_value=None),
+    ):
+        result = orders.get_order_route(_UUID)
+
+    assert result == {
+        "orderId": str(_UUID),
+        "templateName": "Chocolate Confetti Celebration",
+        "configuration": _ORDER_FOR_PUBLIC_VIEW["configuration"],
+        "totalPrice": 152.0,
+        "orderStatus": "pending",
+        "paymentStatus": "pending",  # no payment row yet -- defaults to pending, never invented as "paid"
+    }
+
+
+def test_get_order_route_returns_public_view_with_paid_payment():
+    payment = {"status": "paid", "amount": 152.0, "simulated_reference": "SIM-ABC123"}
+    with (
+        patch.object(orders.order_service, "get_order_by_id", return_value={**_ORDER_FOR_PUBLIC_VIEW, "status": "confirmed"}),
+        patch.object(orders.payment_service, "get_payment_for_order", return_value=payment),
+    ):
+        result = orders.get_order_route(_UUID)
+
+    assert result["orderStatus"] == "confirmed"
+    assert result["paymentStatus"] == "paid"
+
+
+def test_get_order_route_returns_404_for_missing_order():
+    with patch.object(orders.order_service, "get_order_by_id", return_value=None):
+        try:
+            orders.get_order_route(_UUID)
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 404
+        else:
+            raise AssertionError("expected an HTTPException(404) for a missing order")
+
+
+# --- POST /orders/{id}/pay ---------------------------------------------------
+
+
+def test_pay_order_route_returns_payment_and_order_status():
+    # The route function's own signature takes ONLY order_id (see
+    # app/api/routes/orders.py) -- there is nowhere for a client to pass
+    # an amount even if it tried; payment_service.simulate_payment is the
+    # one and only source of the charged (simulated) amount.
+    with patch.object(
+        orders.payment_service,
+        "simulate_payment",
+        return_value={
+            "payment": {"status": "paid", "amount": 152.0, "simulated_reference": "SIM-ABC123", "paid_at": "2026-08-12T10:00:00+00:00"},
+            "order_status": "confirmed",
+        },
+    ) as mock_simulate:
+        result = orders.pay_order_route(_UUID)
+
+    mock_simulate.assert_called_once_with(str(_UUID))
+    assert result == {
+        "paymentStatus": "paid",
+        "orderStatus": "confirmed",
+        "amount": 152.0,
+        "simulatedReference": "SIM-ABC123",
+        "paidAt": "2026-08-12T10:00:00+00:00",
+    }
+
+
+def test_pay_order_route_returns_404_for_a_nonexistent_order():
+    with patch.object(orders.payment_service, "simulate_payment", side_effect=payment_service.OrderNotFoundError(str(_UUID))):
+        try:
+            orders.pay_order_route(_UUID)
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 404
+        else:
+            raise AssertionError("expected an HTTPException(404) for a nonexistent order")
+
+
+def test_pay_order_route_returns_400_for_a_cancelled_order():
+    with patch.object(
+        orders.payment_service, "simulate_payment", side_effect=payment_service.OrderNotPayableError("cancelled")
+    ):
+        try:
+            orders.pay_order_route(_UUID)
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 400
+        else:
+            raise AssertionError("expected an HTTPException(400) for a cancelled order")
 
 
 def run_all() -> None:

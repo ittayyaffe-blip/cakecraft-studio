@@ -318,6 +318,7 @@ def test_draft_reply_to_inbound_message_grounded_answer_creates_draft():
         patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
         patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
         patch.object(agent_service, "supabase") as mock_supabase,
+        patch.object(agent_service.payment_service, "get_payment_for_order", return_value=None),
     ):
         mock_anthropic_cls.return_value.messages.create.return_value = fake_response
         mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result("notif-9")
@@ -550,6 +551,7 @@ def test_order_change_request_intent_produces_red_handling_end_to_end():
         patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
         patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
         patch.object(agent_service, "supabase") as mock_supabase,
+        patch.object(agent_service.payment_service, "get_payment_for_order", return_value=None),
     ):
         mock_anthropic_cls.return_value.messages.create.return_value = fake_response
         mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
@@ -821,6 +823,7 @@ def test_order_status_comes_from_database_not_from_conflicting_rag_text():
         patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
         patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
         patch.object(agent_service, "supabase") as mock_supabase,
+        patch.object(agent_service.payment_service, "get_payment_for_order", return_value=None),
     ):
         mock_anthropic_cls.return_value.messages.create.return_value = fake_response
         mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
@@ -879,6 +882,7 @@ def test_cancellation_and_refund_request_routes_to_review_not_auto_actioned():
         patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
         patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
         patch.object(agent_service, "supabase") as mock_supabase,
+        patch.object(agent_service.payment_service, "get_payment_for_order", return_value=None),
     ):
         mock_anthropic_cls.return_value.messages.create.return_value = fake_response
         mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
@@ -1259,6 +1263,7 @@ def test_order_notes_reach_the_prompt_so_staff_can_see_a_flagged_requirement():
         patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
         patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
         patch.object(agent_service, "supabase") as mock_supabase,
+        patch.object(agent_service.payment_service, "get_payment_for_order", return_value=None),
     ):
         mock_anthropic_cls.return_value.messages.create.return_value = fake_response
         mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
@@ -1541,6 +1546,7 @@ def test_answer_customer_question_with_order_context_grounds_on_the_real_order()
         patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
         patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
         patch.object(agent_service, "supabase") as mock_supabase,
+        patch.object(agent_service.payment_service, "get_payment_for_order", return_value=None),
     ):
         mock_anthropic_cls.return_value.messages.create.return_value = fake_response
         mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
@@ -1835,6 +1841,85 @@ def test_website_first_prompt_also_used_for_inbound_whatsapp_email_replies():
 
     sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
     assert "templates.html?collection=Wedding" in sent_prompt
+
+
+# --- Payment grounding (simulated/demo payment + automatic confirmation) ---
+# "How can I pay?" / "Do I pay now?" etc. must answer from REAL order/
+# payment state, never invent a checkout, a refund, or a payment success --
+# same shared _classify_and_respond prompt as Website First above, so this
+# covers chat, email, and WhatsApp in one change.
+
+_FAKE_ORDER_WITH_TEMPLATE = {
+    "id": "order-1", "status": "pending", "pickup_date": None, "notes": None,
+    "cake_templates": {"name": "Chocolate Confetti Celebration", "category": "Birthday"},
+}
+
+
+def test_payment_prompt_forbids_hallucinated_checkout_refunds_or_success():
+    fake_response = _fake_claude_json_response(intent="ORDER_STATUS", subject="Re: payment", body="...")
+    fake_chunks = [{"title": "Pricing Policy", "content": "...", "source_file": "pricing_policy.md"}]
+
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+        patch.object(agent_service.payment_service, "get_payment_for_order", return_value=None),
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
+
+        agent_service.answer_customer_question("How can I pay?", _FAKE_INBOUND_CUSTOMER, _FAKE_ORDER_WITH_TEMPLATE)
+
+    sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
+    lowered = " ".join(sent_prompt.lower().split())
+    assert "simulated/demo system only" in lowered
+    assert "no real credit-card processing" in lowered
+    assert "never claim a payment succeeded" in lowered
+
+
+def test_payment_prompt_shows_the_real_pending_payment_page_link_for_a_linked_order():
+    fake_response = _fake_claude_json_response(intent="ORDER_STATUS", subject="Re: payment", body="...")
+    fake_chunks = [{"title": "Pricing Policy", "content": "...", "source_file": "pricing_policy.md"}]
+
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+        patch.object(agent_service.payment_service, "get_payment_for_order", return_value=None),
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
+
+        agent_service.answer_customer_question("Do I pay now?", _FAKE_INBOUND_CUSTOMER, _FAKE_ORDER_WITH_TEMPLATE)
+
+    sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "Payment status: pending -- payment page: https://cakecraft-studio-production.up.railway.app/payment.html?order=order-1" in sent_prompt
+
+
+def test_payment_prompt_states_paid_and_confirmed_once_payment_succeeded():
+    fake_response = _fake_claude_json_response(intent="ORDER_STATUS", subject="Re: payment", body="...")
+    fake_chunks = [{"title": "Pricing Policy", "content": "...", "source_file": "pricing_policy.md"}]
+    paid_order = {**_FAKE_ORDER_WITH_TEMPLATE, "status": "confirmed"}
+
+    with (
+        patch.object(agent_service.rag_service, "retrieve", return_value=fake_chunks),
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+        patch.object(
+            agent_service.payment_service, "get_payment_for_order",
+            return_value={"status": "paid", "simulated_reference": "SIM-ABC123"},
+        ),
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = fake_response
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
+
+        agent_service.answer_customer_question("Did my payment go through?", _FAKE_INBOUND_CUSTOMER, paid_order)
+
+    sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert "Payment status: paid (order confirmed), reference SIM-ABC123" in sent_prompt
 
 
 def run_all() -> None:

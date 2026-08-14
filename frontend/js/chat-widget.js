@@ -132,6 +132,20 @@ function buildOrderNudge(onStart) {
   return nudge;
 }
 
+// Shown once, right after a chat-assisted order is created (status
+// "pending") -- payment is a separate, explicit customer action from
+// order confirmation (see agent_service.run_order_assistant_turn's own
+// note), never triggered automatically. Same plain-button pattern as
+// buildOrderNudge above, not part of the persisted transcript.
+function buildPayNowButton(onPay) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "chat-widget__order-nudge";
+  button.textContent = "Pay Now (Simulated)";
+  button.addEventListener("click", onPay);
+  return button;
+}
+
 function buildIdentityForm(onSubmit) {
   const form = document.createElement("form");
   form.className = "chat-widget__identity-form";
@@ -300,6 +314,32 @@ function initChatWidget() {
     }
   };
 
+  // Simulated/demo payment -- the customer's own explicit click, calling
+  // POST /orders/{id}/pay directly (never through Claude/the order
+  // assistant, so payment success can never be an AI-generated claim --
+  // see payment_service.simulate_payment's own docstring). Rendered text
+  // comes entirely from the real backend response.
+  const handlePayNow = async (orderId, button) => {
+    button.disabled = true;
+    errorEl.classList.add("is-hidden");
+
+    try {
+      const result = await payOrder(orderId);
+      const text =
+        `Payment received successfully.\nYour order is now confirmed.\n` +
+        `Reference: ${result.simulatedReference}\nTotal paid: $${Number(result.amount).toFixed(2)}\n` +
+        `We'll keep you updated as your cake moves through production.`;
+      messages.appendChild(buildMessageBubble("order-success", text));
+      appendChatHistory({ role: "order-success", text });
+      button.remove();
+    } catch (error) {
+      errorEl.textContent = "Sorry, something went wrong processing payment. Please try again.";
+      errorEl.classList.remove("is-hidden");
+      button.disabled = false;
+    }
+    messages.scrollTop = messages.scrollHeight;
+  };
+
   // One turn of chat-assisted ordering (POST /chat/order) -- same
   // transcript/history as sendQuestion above, just a different endpoint
   // and it tracks orderDraft between turns. Never creates an order
@@ -339,6 +379,10 @@ function initChatWidget() {
       if (response.orderCreated) {
         messages.appendChild(buildMessageBubble("order-success", response.reply));
         appendChatHistory({ role: "order-success", text: response.reply });
+        if (response.orderId) {
+          const payBtn = buildPayNowButton(() => handlePayNow(response.orderId, payBtn));
+          messages.appendChild(payBtn);
+        }
         exitOrderingMode();
       } else {
         messages.appendChild(buildMessageBubble("assistant", response.reply));

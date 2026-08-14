@@ -26,7 +26,7 @@ from app.schemas.admin_order import (
     AdminOrderListResponse,
     OrderStatusUpdateRequest,
 )
-from app.services import notification_service, order_service
+from app.services import notification_service, order_service, payment_service
 from app.services.auth_service import AdminIdentity
 from app.services.audit_service import record_event
 
@@ -55,8 +55,9 @@ def list_orders(
 
 @router.get("/{order_id}", response_model=AdminOrderDetail)
 def get_order(order_id: uuid.UUID, admin: AdminIdentity = Depends(get_current_admin)):
+    order_id_str = str(order_id)
     try:
-        order = order_service.get_order_by_id(str(order_id))
+        order = order_service.get_order_by_id(order_id_str)
     except Exception:
         logger.exception("Failed to fetch order")
         raise HTTPException(status_code=500, detail="Failed to fetch order")
@@ -64,7 +65,8 @@ def get_order(order_id: uuid.UUID, admin: AdminIdentity = Depends(get_current_ad
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    return order
+    payment = payment_service.get_payment_for_order(order_id_str)
+    return {**order, "payment": payment}
 
 
 @router.patch("/{order_id}/status", response_model=AdminOrderDetail)

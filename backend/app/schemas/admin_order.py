@@ -14,6 +14,18 @@ from datetime import date, datetime, time
 from pydantic import BaseModel
 
 
+class AdminOrderPayment(BaseModel):
+    """Simulated/demo payment status for the order detail drawer -- see
+    app/services/payment_service.py's own docstring on why no real card
+    data ever appears here (there is none, anywhere in this project).
+    """
+
+    status: str
+    amount: float | None = None
+    simulated_reference: str | None = None
+    paid_at: datetime | None = None
+
+
 class AdminOrderCustomer(BaseModel):
     id: str
     name: str
@@ -42,6 +54,7 @@ class AdminOrderSummary(BaseModel):
 class AdminOrderDetail(AdminOrderSummary):
     notes: str | None = None
     configuration: dict
+    payment: AdminOrderPayment | None = None
 
 
 class AdminOrderListResponse(BaseModel):

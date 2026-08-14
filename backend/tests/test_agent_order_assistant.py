@@ -22,8 +22,8 @@ from app.services import agent_service
 _CUSTOMER = {"id": "cust-1", "name": "Jane Doe", "email": "jane@example.com"}
 
 _TEMPLATES = [
-    {"id": "tpl-1", "name": "Classic Vanilla", "category": "Birthday", "base_price": 45.0},
-    {"id": "tpl-2", "name": "Chocolate Confetti Celebration", "category": "Birthday", "base_price": 52.0},
+    {"id": "tpl-1", "name": "Classic Vanilla", "category": "Birthday", "base_price": 45.0, "active": True},
+    {"id": "tpl-2", "name": "Chocolate Confetti Celebration", "category": "Birthday", "base_price": 52.0, "active": True},
 ]
 _OPTIONS = {
     "cake_sizes": [
@@ -96,7 +96,10 @@ def _run(
         patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
         patch.object(agent_service, "supabase") as mock_supabase,
         patch.object(agent_service.order_service, "create_order") as mock_create_order,
-        patch.object(agent_service.order_service, "get_order_by_id", return_value={"id": "order-1", "status": "pending"}),
+        patch.object(
+            agent_service.order_service, "get_order_by_id",
+            return_value={"id": "order-1", "status": "pending", "total_price": 152.0},
+        ),
         patch.object(agent_service.notification_service, "create_notification_for_order_event") as mock_notify,
     ):
         if claude_side_effect is not None:
@@ -242,7 +245,7 @@ def test_created_order_associated_with_the_correct_customer():
         patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
         patch.object(agent_service, "supabase") as mock_supabase,
         patch.object(agent_service.order_service, "create_order", return_value="order-2") as mock_create_order,
-        patch.object(agent_service.order_service, "get_order_by_id", return_value={"id": "order-2"}),
+        patch.object(agent_service.order_service, "get_order_by_id", return_value={"id": "order-2", "total_price": 45.0}),
         patch.object(agent_service.notification_service, "create_notification_for_order_event"),
     ):
         mock_anthropic_cls.return_value.messages.create.return_value = _fake_claude_response(confirmedNow=True)
@@ -793,7 +796,10 @@ def test_reported_create_order_failure_is_reproduced_and_fixed():
         patch.object(agent_service.order_service, "get_designer_options", return_value=_OPTIONS),
         patch.object(agent_service.order_service, "find_or_create_customer", return_value="cust-1"),
         patch.object(agent_service.order_service, "supabase") as mock_order_supabase,
-        patch.object(agent_service.order_service, "get_order_by_id", return_value={"id": "order-real-1", "status": "pending"}),
+        patch.object(
+            agent_service.order_service, "get_order_by_id",
+            return_value={"id": "order-real-1", "status": "pending", "total_price": 152.0},
+        ),
         patch.object(agent_service.notification_service, "create_notification_for_order_event"),
     ):
         mock_anthropic_cls.return_value.messages.create.return_value = _fake_claude_response(confirmedNow=True)
@@ -858,6 +864,71 @@ def test_prompt_forbids_promising_rush_availability_and_captures_it_as_a_note():
     )
     assert "do not promise or guess availability" in prompt.lower()
     assert "specialrequestnote" in prompt.lower()
+
+
+# --- Payment is a separate, explicit customer action -----------------------
+# Order confirmation and payment are two distinct actions (see this
+# module's own note on run_order_assistant_turn's success branch): a
+# freshly-created order must always come back Pending, offering the next
+# step, never auto-paid.
+
+
+def test_chat_order_creation_does_not_automatically_trigger_payment():
+    with patch.object(agent_service, "payment_service") as mock_payment_service:
+        result, mock_create_order, _, _sb = _run(
+            "yes and confirmed. Do I pay now?",
+            _REPORTED_BUG_DRAFT,
+            {"confirmedNow": True, "reply": "..."},
+        )
+
+    assert result["order_created"] is True
+    mock_payment_service.simulate_payment.assert_not_called()
+    lowered = result["reply"].lower()
+    assert "payment status: pending" in lowered
+    assert "would you like to complete the simulated payment now" in lowered
+
+
+def test_chat_order_created_reply_includes_the_real_authoritative_total():
+    # total_price comes from the real, freshly-fetched order row (get_
+    # order_by_id) -- the same orders.total_price payment_service.
+    # simulate_payment will later charge (simulated) against -- never a
+    # separately recomputed or Claude-stated number.
+    result, _, _, _sb = _run(
+        "yes and confirmed. Do I pay now?",
+        _REPORTED_BUG_DRAFT,
+        {"confirmedNow": True, "reply": "..."},
+    )
+    assert "$152.00" in result["reply"]
+
+
+def test_whatsapp_order_creation_does_not_automatically_trigger_payment():
+    with patch.object(agent_service, "payment_service") as mock_payment_service:
+        result, mock_create_order, _, _sb = _run(
+            "yes and confirmed. Do I pay now?",
+            _REPORTED_BUG_DRAFT,
+            {"confirmedNow": True, "reply": "..."},
+            channel="whatsapp",
+        )
+
+    assert result["order_created"] is True
+    mock_payment_service.simulate_payment.assert_not_called()
+    assert "payment status: pending" in result["reply"].lower()
+
+
+def test_whatsapp_order_created_reply_points_to_the_real_website_payment_page():
+    # WhatsApp has no button surface -- it gets the real payment.html link
+    # for the order instead of attempting an in-thread card flow (see this
+    # module's own note on why). Never requests card details in the reply.
+    result, _, _, _sb = _run(
+        "yes and confirmed. Do I pay now?",
+        _REPORTED_BUG_DRAFT,
+        {"confirmedNow": True, "reply": "..."},
+        channel="whatsapp",
+    )
+    assert f"{agent_service._CUSTOMER_SITE_BASE}/payment.html?order=order-1" in result["reply"]
+    lowered = result["reply"].lower()
+    assert "card" not in lowered
+    assert "cvv" not in lowered
 
 
 def run_all() -> None:

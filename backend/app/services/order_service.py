@@ -47,8 +47,18 @@ def create_order(
     `pickup_date`/`pickup_time` stay unset, exactly as before this
     function gained these parameters.
     """
+    # get_template_by_id() deliberately doesn't filter `active` (the admin
+    # catalog view needs inactive templates too, see its own docstring) --
+    # so it's checked explicitly here, at the one authoritative order-
+    # creation choke point every channel (Website/Chat/WhatsApp/direct API)
+    # goes through. A deactivated template must be rejected exactly like a
+    # nonexistent one: the customer never sees the difference between "no
+    # such cake" and "not offered anymore". cake_size/flavor/filling/
+    # frosting below already only ever search get_designer_options()'s
+    # active-filtered lists, so they're already covered without needing the
+    # same explicit check.
     template = get_template_by_id(order["template_id"])
-    if template is None:
+    if template is None or not template.get("active"):
         return None
 
     options = get_designer_options()

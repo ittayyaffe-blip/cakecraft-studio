@@ -56,6 +56,7 @@ from app.services import (
     designer_service,
     notification_service,
     order_service,
+    payment_service,
     rag_service,
     template_service,
 )
@@ -655,10 +656,24 @@ def _classify_and_respond(
     customer_context = f"- Name: {customer.get('name') or 'the customer'}"
     if order:
         template = order.get("cake_templates") or {}
+        # Real payment state, not left for Claude to guess at -- see the
+        # PAYMENT authority-boundary rule below, and payment_service's own
+        # docstring on why this is the one source of truth.
+        payment = payment_service.get_payment_for_order(order["id"])
+        if order.get("status") == "cancelled":
+            payment_line = "- Payment status: not applicable (order cancelled)"
+        elif payment is None or payment["status"] == "pending":
+            pay_link = f"{_CUSTOMER_SITE_BASE}/payment.html?order={order['id']}"
+            payment_line = f"- Payment status: pending -- payment page: {pay_link}"
+        elif payment["status"] == "paid":
+            payment_line = f"- Payment status: paid (order confirmed), reference {payment.get('simulated_reference')}"
+        else:
+            payment_line = f"- Payment status: {payment['status']}"
         order_context = (
             "ORDER (authoritative — use this, not RAG, for anything about this specific order):\n"
             f"- Order: {template.get('name', 'their cake')} ({template.get('category', '')})\n"
             f"- Order status: {order.get('status')}\n"
+            f"{payment_line}\n"
             f"- Pickup date: {order.get('pickup_date') or 'not scheduled yet'}\n"
             f"- Customer notes on this order: {order.get('notes') or 'none'}"
         )
@@ -692,6 +707,12 @@ to one inbound customer message. House tone: warm, personal, and specific.
 - Never guarantee, promise, authorize, or execute: order changes, cancellations, refunds, discounts,
   delivery/pickup time commitments, or safety/allergen guarantees the bakery knowledge doesn't explicitly
   support. You are drafting a message for a human to review, not taking any action.
+- PAYMENT is a simulated/demo system only — there is no real credit-card processing in this chat, no
+  payment collected on delivery, and no refund capability. If ORDER DATA above is linked, answer strictly
+  from its own Payment status line (pending -> give the exact payment page link shown there, never a
+  different one; paid -> say payment is complete and the order is confirmed). If no order is linked to this
+  conversation, say payment happens once an order has been created. Never claim a payment succeeded, was
+  processed, is available by credit card in this chat, or was refunded unless ORDER DATA explicitly says so.
 - You are an information assistant, not a support-ticket system: never say or imply that "our team will
   follow up", "get back to you", "review your request", or otherwise contact the customer afterward —
   there is no such process behind this chat. When a fact isn't established and matters for their decision,
@@ -1533,7 +1554,36 @@ def run_order_assistant_turn(
         if order_id:
             order_created = True
             created_order = order_service.get_order_by_id(order_id)
-            reply_text = f"Your order has been created — reference {order_id}. Our team will review it shortly."
+            # total_price is orders.total_price itself -- the same real,
+            # deterministic value payment_service.simulate_payment will
+            # later charge (simulated) against, never a separately
+            # recomputed or Claude-stated number.
+            price_line = (
+                f"Total: ${created_order['total_price']:.2f}\n" if created_order is not None else ""
+            )
+            # Payment is a separate, explicit customer action from order
+            # confirmation (see this function's own docstring) -- never
+            # triggered here. Chat gets a real "Pay Now" button appended
+            # client-side (see chat-widget.js); WhatsApp has no button
+            # surface, so it gets the real Website payment page link
+            # instead of attempting an in-thread card flow.
+            if channel == "whatsapp":
+                pay_link = f"{_CUSTOMER_SITE_BASE}/payment.html?order={order_id}"
+                reply_text = (
+                    f"🎂 Your CakeCraft order has been created.\n\n"
+                    f"Order: #{order_id}\n"
+                    f"{price_line}"
+                    f"Payment status: Pending\n\n"
+                    f"To complete the simulated payment, use:\n{pay_link}"
+                )
+            else:
+                reply_text = (
+                    f"🎂 Your CakeCraft order has been created.\n\n"
+                    f"Order: #{order_id}\n"
+                    f"{price_line}"
+                    f"Payment status: Pending\n\n"
+                    f"Would you like to complete the simulated payment now?"
+                )
             try:
                 if created_order is not None:
                     notification_service.create_notification_for_order_event(created_order, "pending")

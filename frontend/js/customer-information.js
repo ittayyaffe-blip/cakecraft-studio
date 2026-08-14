@@ -84,7 +84,11 @@ function initSubmitButton() {
 
     try {
       const response = await createOrder(order);
-      window.location.href = `confirmation.html?orderId=${encodeURIComponent(response.orderId)}`;
+      // Order is created as `pending`; payment is a separate, explicit
+      // step the customer takes on the payment page next -- see
+      // payment_service.py's own note on why this never happens
+      // automatically right after order creation.
+      window.location.href = `payment.html?order=${encodeURIComponent(response.orderId)}`;
     } catch (error) {
       renderSubmitError("Unable to submit your order. Please try again.");
       button.disabled = false;
