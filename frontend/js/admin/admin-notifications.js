@@ -258,7 +258,7 @@ function buildPreviewBlock(notification, { editable }) {
   const bodyTextarea = document.createElement("textarea");
   bodyTextarea.id = "notificationBodyInput";
   bodyTextarea.setAttribute("aria-label", "Message");
-  bodyTextarea.rows = 5;
+  bodyTextarea.rows = 9;
   bodyTextarea.value = notification.body || "";
 
   const saveBtn = document.createElement("button");

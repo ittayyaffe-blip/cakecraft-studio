@@ -2122,13 +2122,14 @@ h3 {
    -- ID-scoped so admin-orders.html's #orderDrawer (the .admin-drawer
    class's other user) is completely unaffected. Roomier on desktop for
    the WhatsApp Conversation thread (see .whatsapp-thread__messages
+   below) and the Preview section (see .notification-preview textarea
    below); everything below 1024px keeps .admin-drawer's existing
    100%/420px sizing unchanged, same responsive floor every other drawer
    already has. */
 @media (min-width: 1024px) {
   #notificationDrawer {
-    width: 48vw;
-    max-width: 1000px;
+    width: 60vw;
+    max-width: 1300px;
   }
 }
 
@@ -2593,6 +2594,24 @@ h3 {
 
 .notification-preview textarea {
   resize: vertical;
+}
+
+/* Wider drawer (see #notificationDrawer above) means the Preview
+   fields -- especially the message body, the thing staff actually has
+   to read and judge before sending -- should use that width rather
+   than staying a narrow, cramped box surrounded by empty space. Same
+   colors/border/radius as the base rule above, sizing only. */
+@media (min-width: 1024px) {
+  .notification-preview input[type="text"],
+  .notification-preview textarea {
+    padding: 0.9rem 1.1rem;
+    font-size: 1.02rem;
+  }
+
+  .notification-preview textarea {
+    min-height: 260px;
+    line-height: 1.6;
+  }
 }
 
 .notification-actions {
