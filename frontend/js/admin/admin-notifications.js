@@ -402,7 +402,7 @@ function buildWhatsAppReplyComposer(customerId, onSent) {
   form.className = "whatsapp-thread__composer";
 
   const textarea = document.createElement("textarea");
-  textarea.rows = 2;
+  textarea.rows = 3;
   textarea.placeholder = "Type a WhatsApp reply…";
   textarea.setAttribute("aria-label", "WhatsApp reply");
 

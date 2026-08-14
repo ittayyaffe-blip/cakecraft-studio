@@ -2118,6 +2118,20 @@ h3 {
   padding: var(--space-3);
 }
 
+/* Communication drawer only (#notificationDrawer, admin-notifications.html)
+   -- ID-scoped so admin-orders.html's #orderDrawer (the .admin-drawer
+   class's other user) is completely unaffected. Roomier on desktop for
+   the WhatsApp Conversation thread (see .whatsapp-thread__messages
+   below); everything below 1024px keeps .admin-drawer's existing
+   100%/420px sizing unchanged, same responsive floor every other drawer
+   already has. */
+@media (min-width: 1024px) {
+  #notificationDrawer {
+    width: 48vw;
+    max-width: 1000px;
+  }
+}
+
 .admin-drawer__header {
   display: flex;
   align-items: center;
@@ -2412,6 +2426,29 @@ h3 {
 
 .whatsapp-thread__composer .admin-state--error {
   flex-basis: 100%;
+}
+
+/* Wider drawer (see #notificationDrawer above), so the conversation gets
+   more room too: a taller scroll area (capped by viewport height, not
+   just a fixed px value, so it stays sensible on shorter laptop
+   screens), bubbles that use the extra width without stretching to an
+   unreadable line length, and a roomier reply textarea -- same tokens/
+   colors throughout, only sizing changes. */
+@media (min-width: 1024px) {
+  .whatsapp-thread__messages {
+    max-height: min(480px, 55vh);
+  }
+
+  .whatsapp-thread__bubble {
+    max-width: min(75%, 640px);
+    font-size: 0.95rem;
+  }
+
+  .whatsapp-thread__composer textarea {
+    min-height: 4.5rem;
+    padding: 0.75rem 0.9rem;
+    font-size: 0.95rem;
+  }
 }
 
 /* WhatsApp status banner (Twilio Sandbox integration) — same visual
