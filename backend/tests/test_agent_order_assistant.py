@@ -111,6 +111,10 @@ def _run(
         patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
         patch.object(agent_service, "supabase") as mock_supabase,
         patch.object(agent_service.order_service, "create_order") as mock_create_order,
+        # Only consulted when a pickup date was actually captured (for the
+        # rush-warning check) -- a real, unmocked no-op for every existing
+        # test here, which never sets one.
+        patch.object(agent_service.order_service, "get_template_by_id", return_value=_TEMPLATES[0]),
         patch.object(
             agent_service.order_service, "get_order_by_id",
             return_value={"id": "order-1", "status": "pending", "total_price": 152.0},
@@ -150,6 +154,7 @@ def test_missing_fields_are_requested_no_order_created():
     assert result["draft"] == {
         "templateId": None, "cakeSizeId": None, "flavorId": None, "fillingId": None,
         "frostingId": None, "phone": None, "specialRequestNote": None,
+        "pickupDate": None, "pickupTime": None,
         "awaitingOrderConfirmation": False,
     }
     assert "size" in result["reply"].lower() or "flavor" in result["reply"].lower()
@@ -242,13 +247,19 @@ def test_confirmed_complete_order_calls_the_existing_order_service():
             # otherwise -- see Bug #2's fix); None is the real, valid,
             # "nothing special noted" value.
             "notes": None,
-        }
+        },
+        # Pickup Date + Order Priority, Phase 2: optional in chat -- None
+        # here since _COMPLETE_DRAFT never stated one, same "not yet
+        # known" contract as every other unset field.
+        pickup_date=None,
+        pickup_time=None,
     )
     mock_notify.assert_called_once()
     # Draft is cleared once the order actually exists -- nothing left to collect.
     assert result["draft"] == {
         "templateId": None, "cakeSizeId": None, "flavorId": None, "fillingId": None,
         "frostingId": None, "phone": None, "specialRequestNote": None,
+        "pickupDate": None, "pickupTime": None,
         "awaitingOrderConfirmation": False,
     }
 
@@ -550,7 +561,10 @@ def test_failure_path_preserves_a_non_empty_incoming_draft():
     assert result["ai_status"] == "failed"
     assert result["reply"]
     assert result["order_created"] is False
-    assert result["draft"] == {**partial_draft, "specialRequestNote": None, "awaitingOrderConfirmation": False}  # nothing lost
+    assert result["draft"] == {
+        **partial_draft, "specialRequestNote": None, "pickupDate": None, "pickupTime": None,
+        "awaitingOrderConfirmation": False,
+    }  # nothing lost
     mock_create_order.assert_not_called()
 
 
@@ -794,7 +808,9 @@ def test_full_valid_confirmed_payload_reaches_create_order_exactly_once():
             "customer_phone": "+972545446601",
             "customer_email": "jane@example.com",
             "notes": None,
-        }
+        },
+        pickup_date=None,
+        pickup_time=None,
     )
     mock_notify.assert_called_once()
 
@@ -847,7 +863,10 @@ def test_failed_order_creation_preserves_the_full_reported_draft_untouched():
         create_order_side_effect=RuntimeError("transient DB error"),
     )
     assert result["order_created"] is False
-    assert result["draft"] == {**_REPORTED_BUG_DRAFT, "specialRequestNote": None, "awaitingOrderConfirmation": False}
+    assert result["draft"] == {
+        **_REPORTED_BUG_DRAFT, "specialRequestNote": None, "pickupDate": None, "pickupTime": None,
+        "awaitingOrderConfirmation": False,
+    }
     mock_create_order.assert_called_once()
 
 
@@ -1151,6 +1170,93 @@ def test_allergy_confirmation_is_not_repeated_in_the_success_message():
     assert result["order_created"] is True
     mock_create_order.assert_called_once()
     assert "food allerg" not in result["reply"].lower()
+
+
+# --- Pickup Date + Order Priority, Phase 2: optional chat capture ----------
+
+
+def _next_weekday_iso(target_weekday, *, at_least_days_out=7):
+    from datetime import datetime, timedelta, timezone
+
+    candidate = datetime.now(timezone.utc).date() + timedelta(days=at_least_days_out)
+    while candidate.weekday() != target_weekday:
+        candidate += timedelta(days=1)
+    return candidate.isoformat()
+
+
+def test_valid_pickup_date_and_time_are_captured_into_the_draft():
+    tuesday = _next_weekday_iso(1)  # 1 = Tuesday
+    result, _mock_create_order, _, _sb = _run(
+        "Tuesday at noon works for me",
+        None,
+        {"pickupDate": tuesday, "pickupTime": "12:00", "reply": "Got it — Tuesday at noon."},
+    )
+    assert result["draft"]["pickupDate"] == tuesday
+    assert result["draft"]["pickupTime"] == "12:00:00"  # time.isoformat() always includes seconds
+
+
+def test_monday_pickup_proposed_by_claude_is_never_trusted():
+    # Same "propose, Python decides" posture as every other field -- an
+    # invalid business-rule violation from Claude's own extraction must
+    # never reach the draft, exactly like an unrecognized catalog id.
+    monday = _next_weekday_iso(0)  # 0 = Monday
+    result, _mock_create_order, _, _sb = _run(
+        "Monday at noon please",
+        None,
+        {"pickupDate": monday, "pickupTime": "12:00", "reply": "..."},
+    )
+    assert result["draft"]["pickupDate"] is None
+    assert result["draft"]["pickupTime"] is None
+
+
+def test_malformed_pickup_date_from_claude_is_dropped_not_crashed():
+    result, _mock_create_order, _, _sb = _run(
+        "next Blursday maybe?",
+        None,
+        {"pickupDate": "not-a-real-date", "pickupTime": "noon-ish", "reply": "..."},
+    )
+    assert result["draft"]["pickupDate"] is None
+    assert result["draft"]["pickupTime"] is None
+
+
+def test_order_still_confirms_without_any_pickup_date_stated():
+    # The deliberate scope decision for Phase 2: pickup scheduling is
+    # mandatory on the Website form, but stays OPTIONAL in chat rather
+    # than becoming a new hard gate on the existing, heavily-tested
+    # confirmation flow (see run_order_assistant_turn's own note).
+    result, mock_create_order, _, _sb = _run(
+        "Yes, please create my order",
+        _COMPLETE_DRAFT,
+        {"confirmedNow": True, "reply": "..."},
+    )
+    assert result["order_created"] is True
+    mock_create_order.assert_called_once()
+    assert mock_create_order.call_args.kwargs == {"pickup_date": None, "pickup_time": None}
+
+
+def test_confirmed_order_with_known_pickup_passes_it_through_to_create_order():
+    tuesday = _next_weekday_iso(1, at_least_days_out=60)  # well outside every category's rush window
+    draft = {**_COMPLETE_DRAFT, "pickupDate": tuesday, "pickupTime": "12:00"}
+    result, mock_create_order, _, _sb = _run(
+        "Yes, please create my order", draft, {"confirmedNow": True, "reply": "..."},
+    )
+    assert result["order_created"] is True
+    assert mock_create_order.call_args.kwargs == {"pickup_date": tuesday, "pickup_time": "12:00"}
+    # Outside the rush window (Birthday's 2-day minimum) -- notes stays untouched.
+    assert mock_create_order.call_args.args[0]["notes"] is None
+
+
+def test_confirmed_order_with_rush_pickup_gets_the_warning_appended_to_notes():
+    from datetime import datetime, timedelta, timezone
+
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
+    draft = {**_COMPLETE_DRAFT, "pickupDate": tomorrow, "pickupTime": "12:00"}
+    result, mock_create_order, _, _sb = _run(
+        "Yes, please create my order", draft, {"confirmedNow": True, "reply": "..."},
+    )
+    assert result["order_created"] is True
+    notes = mock_create_order.call_args.args[0]["notes"]
+    assert notes is not None and "rush" in notes.lower()
 
 
 def run_all() -> None:

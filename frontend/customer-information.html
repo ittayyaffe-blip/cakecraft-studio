@@ -108,6 +108,20 @@
           </div>
 
           <div class="field-group">
+            <p class="form-hint">Choose when you'd like to collect your cake. We're open Tuesday&ndash;Sunday, 9:00 AM&ndash;6:00 PM (closed Mondays).</p>
+            <div class="form-field">
+              <label for="pickupDate">Desired Pickup Date *</label>
+              <input type="date" id="pickupDate" name="pickupDate" required>
+            </div>
+
+            <div class="form-field">
+              <label for="pickupTime">Desired Pickup Time *</label>
+              <input type="time" id="pickupTime" name="pickupTime" min="09:00" max="18:00" required>
+            </div>
+            <p id="pickupRushWarning" class="form-warning" hidden></p>
+          </div>
+
+          <div class="field-group">
             <p class="allergy-confirm__note"><strong>Allergy Confirmation:</strong> CakeCraft Studio products may contain or come into contact with common allergens including milk, eggs, nuts, soy and other ingredients.</p>
             <label class="allergy-confirm">
               <input type="checkbox" id="allergyConfirmCheckbox" name="allergyConfirm" required>

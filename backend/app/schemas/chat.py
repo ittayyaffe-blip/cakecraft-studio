@@ -46,6 +46,15 @@ class ChatOrderDraft(BaseModel):
     fillingId: str | None = None
     frostingId: str | None = None
     phone: str | None = None
+    # Pickup Date + Order Priority, Phase 2: optional, opportunistic --
+    # never required to confirm a chat order (see run_order_assistant_
+    # turn's own note on why this stays additive rather than a hard gate,
+    # unlike the Website form). ISO "YYYY-MM-DD"/"HH:MM" strings, always
+    # independently re-validated server-side before ever reaching
+    # order_service.create_order() -- never trusted just because Claude
+    # proposed them, same posture as every other extracted field here.
+    pickupDate: str | None = None
+    pickupTime: str | None = None
     # Free text, e.g. "ready by tomorrow?" -- never required, never id-
     # validated, just carried through to the created order's `notes`
     # field (see agent_service._order_assistant_prompt's own note on

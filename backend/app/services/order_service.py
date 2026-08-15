@@ -1,7 +1,81 @@
+from datetime import date, datetime, time, timezone
+
 from app.core.database import supabase
 from app.services.designer_service import get_designer_options
 from app.services.search_utils import sanitize_search_term
 from app.services.template_service import get_template_by_id
+
+# --- Pickup scheduling (Pickup Date + Order Priority, Phase 2) ------------
+# Deterministic, Claude-free -- the ONE place both the Website order route
+# (app/api/routes/orders.py) and the chat order assistant (agent_service.
+# run_order_assistant_turn) validate a customer-chosen pickup date/time,
+# so the two channels can never drift apart. Deliberately NOT enforced
+# inside create_order() itself: that function's pickup_date/pickup_time
+# keyword overrides are also used by tools/demo_data_seed.py to backdate
+# realistic historical orders (see create_order's own docstring) --
+# "cannot be in the past relative to today" would break every one of
+# those. Both real call sites call validate_pickup_datetime() themselves,
+# before create_order(), which stays exactly as permissive as it already
+# was.
+_PICKUP_HOURS_START = time(9, 0)
+_PICKUP_HOURS_END = time(18, 0)
+_CLOSED_WEEKDAY = 0  # Monday, per date.weekday()'s own convention (Mon=0)
+
+# Minimum lead time per collection, in days -- exactly the ranges already
+# documented in knowledge_base/bakery_operations_manual.md and
+# frequently_asked_questions.md (Birthday/Baby Shower/Graduation 2-14,
+# Corporate 3-10, Wedding 14-45 days' notice). Only the minimum matters
+# here: this drives a SOFT rush warning, never a hard block, per the
+# approved policy -- a customer inside the window is still allowed to
+# order, just told it'll be treated as a rush request.
+_CATEGORY_MIN_LEAD_DAYS = {
+    "Birthday": 2,
+    "Baby Shower": 2,
+    "Graduation": 2,
+    "Corporate": 3,
+    "Wedding": 14,
+}
+
+
+def validate_pickup_datetime(pickup_date: date, pickup_time: time) -> str | None:
+    """Returns a client-safe error message (never a stack trace) if the
+    date/time is unacceptable, or None if it's fine. Three deterministic
+    rules only -- no lead-time check here, that's advisory (see
+    annotate_notes_with_rush_warning), never a rejection.
+    """
+    pickup_dt = datetime.combine(pickup_date, pickup_time, tzinfo=timezone.utc)
+    if pickup_dt <= datetime.now(timezone.utc):
+        return "Pickup date/time cannot be in the past."
+    if pickup_date.weekday() == _CLOSED_WEEKDAY:
+        return "We're closed Mondays — please choose a pickup day from Tuesday through Sunday."
+    if not (_PICKUP_HOURS_START <= pickup_time <= _PICKUP_HOURS_END):
+        return "Pickup time must be between 9:00 AM and 6:00 PM."
+    return None
+
+
+def annotate_notes_with_rush_warning(template_id: str, notes: str | None, pickup_date: date) -> str | None:
+    """Appends a soft, informational rush note to `notes` when the chosen
+    pickup date falls inside the ordered cake's own category's normal
+    minimum lead time -- never invented, never a rejection (this function
+    is only ever called after validate_pickup_datetime already accepted
+    the date). Returns `notes` unchanged if the template/category can't
+    be resolved or the pickup date is outside the rush window.
+    """
+    template = get_template_by_id(template_id)
+    category = (template or {}).get("category")
+    min_days = _CATEGORY_MIN_LEAD_DAYS.get(category)
+    if min_days is None:
+        return notes
+
+    days_out = (pickup_date - datetime.now(timezone.utc).date()).days
+    if days_out >= min_days:
+        return notes
+
+    rush_line = (
+        f"Rush request — pickup is {days_out} day(s) away, inside the usual {min_days}-day minimum notice "
+        f"for {category} orders. Availability may require bakery attention."
+    )
+    return f"{notes}\n\n{rush_line}" if notes else rush_line
 
 
 def _find_option(options: dict, key: str, option_id: str) -> dict | None:

@@ -78,6 +78,16 @@ function appendBakeryPlanAction(container, action) {
   const title = document.createElement("p");
   title.className = "bakery-plan-action__title";
   title.textContent = bakeryPlanActionLabel(action.actionType);
+  // Pickup Date + Order Priority, Phase 2: the same badge component/CSS
+  // the Back Office Orders page already uses for this exact label set --
+  // no new palette, no drawer redesign, just reusing what's there.
+  if (action.priority) {
+    const priorityBadge = document.createElement("span");
+    priorityBadge.className = `bakery-plan-action__badge status-badge status-badge--priority-${action.priority.toLowerCase()}`;
+    priorityBadge.textContent = action.priority;
+    title.appendChild(document.createTextNode(" "));
+    title.appendChild(priorityBadge);
+  }
   if (!action.safeToExecute) {
     const badge = document.createElement("span");
     badge.className = "bakery-plan-action__badge status-badge--handling-yellow";

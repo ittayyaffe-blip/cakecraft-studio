@@ -30,6 +30,12 @@ class ProposedAction(BaseModel):
     # opinion can never set.
     safeToExecute: bool
     requiresManagerAttention: bool
+    # Pickup Date + Order Priority, Phase 2: the same CRITICAL/HIGH/NORMAL/
+    # LOW label app/services/priority_service.py computes for Back Office
+    # display — attached here purely for the manager's benefit (also
+    # already present as a line in `evidence`), never read back as an
+    # authorization signal.
+    priority: str | None = None
 
 
 class PlanRecommendations(BaseModel):

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime, time
 
 from pydantic import BaseModel
 
@@ -13,6 +13,14 @@ class OrderCreateRequest(BaseModel):
     customer_phone: str
     customer_email: str
     notes: str | None = None
+    # Required for every new order (Pickup Date + Order Priority, Phase 2)
+    # -- Pydantic's own date/time parsing already rejects malformed values
+    # with a clean 422, before this ever reaches order_service.
+    # validate_pickup_datetime (the past/Monday/hours business rules
+    # Pydantic can't know). Historical orders created before this field
+    # existed keep NULL pickup_date/pickup_time — never backfilled.
+    pickup_date: date
+    pickup_time: time
 
 
 class OrderCreateResponse(BaseModel):

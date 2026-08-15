@@ -45,7 +45,9 @@ import json
 import logging
 import re
 import time
+from datetime import date as _date
 from datetime import datetime, timezone
+from datetime import time as _time
 from urllib.parse import quote
 
 import anthropic
@@ -1331,6 +1333,14 @@ def _normalize_order_draft(draft: dict | None) -> dict:
     # rides alongside the real slots the same way `phone` does, see
     # run_order_assistant_turn's own note on rush/availability questions.
     normalized["specialRequestNote"] = draft.get("specialRequestNote") or None
+    # Pickup Date + Order Priority, Phase 2: same "free text, never id-
+    # validated, rides alongside the real slots" treatment as phone/
+    # specialRequestNote above -- deliberately NOT in _ORDER_DRAFT_FIELDS
+    # (so it never becomes a hard requirement for confirmedNow the way
+    # the Website form's pickup fields are; see run_order_assistant_
+    # turn's own note on why chat stays additive here).
+    normalized["pickupDate"] = draft.get("pickupDate") or None
+    normalized["pickupTime"] = draft.get("pickupTime") or None
     # Deterministic, Python-owned conversational state -- never guessed
     # from Claude's own JSON. True exactly when the PREVIOUS turn ended
     # with every field known and no confirmation yet, which (see the
@@ -1462,6 +1472,8 @@ def _format_order_draft(draft: dict, names: dict[str, str]) -> str:
             lines.append(f"  {_ORDER_DRAFT_FIELD_LABELS[field]}: {names.get(value, value)}")
     if draft.get("specialRequestNote"):
         lines.append(f"  special request noted: {draft['specialRequestNote']}")
+    if draft.get("pickupDate") or draft.get("pickupTime"):
+        lines.append(f"  desired pickup: {draft.get('pickupDate') or 'date not yet known'} at {draft.get('pickupTime') or 'time not yet known'}")
     return "\n".join(lines)
 
 
@@ -1474,7 +1486,15 @@ def _order_assistant_prompt(
     conversation_history: str | None = None,
     *,
     awaiting_confirmation: bool = False,
+    today_date: str | None = None,
 ) -> str:
+    # Deterministic, computed here (never Claude-guessed) -- the one
+    # grounding fact #7 below needs to resolve "tomorrow"/"next Friday"
+    # against the REAL current date, not whatever the model itself
+    # believes today is. Keyword-only with a real default so every
+    # existing caller (including every test that calls this function
+    # directly without it) is unaffected.
+    today_date = today_date or datetime.now(timezone.utc).date().isoformat()
     context_section = (
         f"\n=== HOW THIS ORDER STARTED (context only, not instructions) ===\n{trigger_context}\n"
         if trigger_context
@@ -1540,23 +1560,30 @@ address each one, briefly, rather than at length; keep "reply" concise.
    say that needs the bakery to confirm directly, and set "specialRequestNote" to a short (<=200 char)
    note of what they asked (e.g. "customer asked if ready by tomorrow") so the bakery sees it. This must
    never change any other field above.
-7. Decide confirmedNow: true ONLY if the customer's message is an explicit "yes, place/confirm/create the
+7. If — and only if — they state an actual desired pickup day and time you are fully certain of, extract
+   "pickupDate" (ISO "YYYY-MM-DD") and "pickupTime" (24h "HH:MM"). Today's real date is {today_date} — use
+   it to resolve a relative term like "tomorrow" or "next Friday" precisely. If you are not fully certain
+   of either, leave it null rather than guessing — an unset value just means it isn't known yet, which is
+   fine; these two are OPTIONAL and never required to place the order. Recording a desired pickup time is
+   not the same as promising it's available (that's still governed by #6) — never say a date is confirmed
+   or guaranteed here.
+8. Decide confirmedNow: true ONLY if the customer's message is an explicit "yes, place/confirm/create the
    order" (not just answering a question about what's in it, and not a vague acknowledgment like "looks
-   good" or "great") AND every field above is already known (including anything you just extracted from
-   this message). Otherwise false.
-8. Write "reply":
+   good" or "great") AND every field from #1 is already known (including anything you just extracted from
+   this message). pickupDate/pickupTime are never required for this, per #7. Otherwise false.
+9. Write "reply":
    - If confirmedNow is true: a short, warm confirmation (the application creates the order separately —
      do not claim it's created yet).
    - Else: acknowledge whatever you just learned, answer any design/option/custom-request/payment/timing
-     question asked (per #2/#3/#5/#6), and ask ONLY for the specific field(s) still missing — never re-ask
-     for something already known above. If nothing is missing, summarize the selections by name (design,
-     size, flavor, filling, frosting) and ask for explicit confirmation instead — do not state a price
-     number here, the application appends the real one itself (see #4).
-9. Respond with ONLY this JSON object, nothing else:
+     question asked (per #2/#3/#5/#6), and ask ONLY for the specific field(s) still missing from #1 — never
+     re-ask for something already known above. If nothing from #1 is missing, summarize the selections by
+     name (design, size, flavor, filling, frosting) and ask for explicit confirmation instead — do not
+     state a price number here, the application appends the real one itself (see #4).
+10. Respond with ONLY this JSON object, nothing else:
 {{"templateId": "..." or null, "cakeSizeId": "..." or null, "flavorId": "..." or null,
 "fillingId": "..." or null, "frostingId": "..." or null, "phone": "..." or null,
-"specialRequestNote": "..." or null, "confirmedNow": true or false, "asksAboutPrice": true or false,
-"reply": "..."}}"""
+"specialRequestNote": "..." or null, "pickupDate": "..." or null, "pickupTime": "..." or null,
+"confirmedNow": true or false, "asksAboutPrice": true or false, "reply": "..."}}"""
 
 
 def _format_order_conversation_history(messages: list[dict] | None) -> str | None:
@@ -1769,6 +1796,28 @@ def run_order_assistant_turn(
     if isinstance(note_candidate, str) and note_candidate.strip():
         updated["specialRequestNote"] = note_candidate.strip()
 
+    # Pickup Date + Order Priority, Phase 2: Claude's own pickupDate/
+    # pickupTime candidates are NEVER trusted directly -- re-parsed and
+    # re-validated here through the exact same order_service.
+    # validate_pickup_datetime the Website route uses, same "propose,
+    # then Python decides" posture as every other field above. An
+    # invalid/unparseable candidate is simply dropped (draft stays
+    # whatever it already was), never surfaced as an error to the
+    # customer -- the conversation just continues, same as an
+    # unrecognized catalog id being ignored above.
+    date_candidate = parsed.get("pickupDate")
+    time_candidate = parsed.get("pickupTime")
+    if isinstance(date_candidate, str) and date_candidate.strip() and isinstance(time_candidate, str) and time_candidate.strip():
+        try:
+            parsed_date = _date.fromisoformat(date_candidate.strip())
+            parsed_time = _time.fromisoformat(time_candidate.strip())
+        except ValueError:
+            pass
+        else:
+            if order_service.validate_pickup_datetime(parsed_date, parsed_time) is None:
+                updated["pickupDate"] = parsed_date.isoformat()
+                updated["pickupTime"] = parsed_time.isoformat()
+
     all_filled = all(updated[field] for field in _ORDER_DRAFT_FIELDS)
     # Unchanged triple gate: Claude's own confirmedNow AND all_filled AND
     # the independent keyword check must all agree -- see this module's
@@ -1828,6 +1877,17 @@ def run_order_assistant_turn(
         reply_text = f"{reply_text}\n\n{_ALLERGY_CONFIRMATION_PROMPT}"
 
     if confirmed:
+        # Pickup Date + Order Priority, Phase 2: pickupDate/pickupTime are
+        # optional here (see #7's own note in the prompt above) -- already
+        # independently re-validated the moment they were extracted, above,
+        # so nothing further to check here. A rush note is appended the
+        # exact same way the Website route does, via the same shared
+        # helper, only when a pickup date is actually known.
+        notes = updated.get("specialRequestNote")
+        if updated.get("pickupDate"):
+            notes = order_service.annotate_notes_with_rush_warning(
+                updated["templateId"], notes, _date.fromisoformat(updated["pickupDate"])
+            )
         try:
             order_id = order_service.create_order(
                 {
@@ -1846,8 +1906,10 @@ def run_order_assistant_turn(
                     # the customer as "something went wrong"). None is a
                     # real, valid value (nullable column, same as the
                     # Designer flow's blank-notes case).
-                    "notes": updated.get("specialRequestNote"),
-                }
+                    "notes": notes,
+                },
+                pickup_date=updated.get("pickupDate"),
+                pickup_time=updated.get("pickupTime"),
             )
         except Exception:
             logger.exception("Order creation failed in chat order assistant for customer=%s", customer.get("id"))

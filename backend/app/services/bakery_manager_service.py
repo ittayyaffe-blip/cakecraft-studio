@@ -46,7 +46,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from app.services import agent_service, briefing_service, notification_service, order_service, rag_service
+from app.services import agent_service, briefing_service, notification_service, order_service, priority_service, rag_service
 from app.services.audit_service import record_event
 
 logger = logging.getLogger(__name__)
@@ -118,6 +118,30 @@ def _production_start_eligibility(order: dict) -> tuple[bool, list[str]]:
     return False, [f"Pickup date {pickup_date} is {days_out} days out -- not yet within the {_PRODUCTION_START_WITHIN_DAYS}-day production-start window."]
 
 
+_PRIORITY_CANDIDATE_LIMIT = 5  # matches the exact bound briefing_service._high_priority_orders() already used
+
+
+def _priority_flagged_candidates(orders: list[dict], limit: int = _PRIORITY_CANDIDATE_LIMIT) -> list[dict]:
+    """Bounds the in_progress/ready orders shown to Claude to only the
+    ones priority_service.compute_priority() flags as CRITICAL/HIGH,
+    CRITICAL first -- the shared source of truth (Pickup Date + Order
+    Priority, Phase 2), replacing this module's own earlier reuse of
+    briefing_service._high_priority_orders() (a separate, older urgency
+    calculator) for consistency across Back Office/Bakery Manager/RAG.
+    Still bounded at the same limit that fixed two real production
+    truncation failures (see _build_planning_prompt's own docstring) --
+    this changes WHICH orders get shown, never how many.
+    """
+    rank = {"CRITICAL": 0, "HIGH": 1}
+    flagged = []
+    for order in orders:
+        result = priority_service.compute_priority(order)
+        if result["priority"] in rank:
+            flagged.append({**order, "_priority": result["priority"], "_priorityReason": result["reason"]})
+    flagged.sort(key=lambda o: rank[o["_priority"]])
+    return flagged[:limit]
+
+
 def _gather_context() -> dict:
     """Everything the planning prompt needs, gathered deterministically
     and sequentially -- this codebase has no existing concurrency
@@ -137,7 +161,11 @@ def _gather_context() -> dict:
     confirmed_with_eligibility = []
     for order in confirmed_orders:
         eligible, evidence = _production_start_eligibility(order)
-        confirmed_with_eligibility.append({**order, "_productionStartEligible": eligible, "_evidence": evidence})
+        priority_result = priority_service.compute_priority(order)
+        confirmed_with_eligibility.append({
+            **order, "_productionStartEligible": eligible, "_evidence": evidence,
+            "_priority": priority_result["priority"], "_priorityReason": priority_result["reason"],
+        })
 
     knowledge = rag_service.retrieve("production scheduling, lead times, and priority order within a day", top_k=3)
 
@@ -146,6 +174,7 @@ def _gather_context() -> dict:
         "confirmed_orders": confirmed_with_eligibility,
         "in_progress_orders": in_progress_orders,
         "ready_orders": ready_orders,
+        "priority_candidates": _priority_flagged_candidates(in_progress_orders + ready_orders),
         "knowledge": knowledge,
     }
 
@@ -153,11 +182,14 @@ def _gather_context() -> dict:
 def _order_summary_line(order: dict) -> str:
     template = order.get("cake_templates") or {}
     customer = order.get("customers") or {}
-    return (
+    line = (
         f"- id={order['id']} customer={customer.get('name', '?')} "
         f"cake={template.get('name', '?')} ({template.get('category', '?')}) "
         f"pickup_date={order.get('pickup_date') or 'NOT SET'}"
     )
+    if order.get("_priority"):
+        line += f" priority={order['_priority']}"
+    return line
 
 
 def _build_planning_prompt(context: dict) -> str:
@@ -173,13 +205,14 @@ def _build_planning_prompt(context: dict) -> str:
 
     Now: only orders that are ACTUALLY eligible for advance_to_in_progress
     (the one real executable candidate pool) get a line, and in_progress/
-    ready orders reuse the exact same bounded "needs attention today" set
-    briefing_service._high_priority_orders() already computes (limit=5)
-    for the Daily Briefing -- no new query, no new threshold invented.
-    Orders left out of the prompt this way are never silently dropped from
-    the manager's view: the deterministic missing-pickup-date exceptions
-    (see _missing_pickup_date_exceptions) are always built from the FULL
-    confirmed list, independent of what this function includes.
+    ready orders are bounded to priority_service.compute_priority()'s own
+    CRITICAL/HIGH set (see _priority_flagged_candidates, limit=5) -- the
+    shared priority source of truth (Pickup Date + Order Priority, Phase
+    2), not a second ad hoc urgency calculation. Orders left out of the
+    prompt this way are never silently dropped from the manager's view:
+    the deterministic missing-pickup-date exceptions (see _missing_
+    pickup_date_exceptions) are always built from the FULL confirmed
+    list, independent of what this function includes.
     """
     briefing = context["briefing"]
     eligible_confirmed = [o for o in context["confirmed_orders"] if o["_productionStartEligible"]]
@@ -188,9 +221,8 @@ def _build_planning_prompt(context: dict) -> str:
         for o in eligible_confirmed
     ) or "(none currently within the production-start window)"
     high_priority_lines = "\n".join(
-        f"- id={o['id']} customer={o.get('customerName') or '?'} cake={o.get('templateName') or '?'} "
-        f"status={o['status']} ({o['reason']})"
-        for o in briefing["highPriorityOrders"]
+        f"{_order_summary_line(o)} status={o['status']} ({o['_priorityReason']})"
+        for o in context["priority_candidates"]
     ) or "(none flagged as high priority)"
     knowledge_context = "\n\n".join(f"[{c['title']}]\n{c['content']}" for c in context["knowledge"])
 
@@ -276,6 +308,7 @@ def _classify_action(raw: dict) -> dict:
     order_id = raw.get("orderId") if isinstance(raw.get("orderId"), str) else None
     customer_id = raw.get("customerId") if isinstance(raw.get("customerId"), str) else None
     evidence = list(raw.get("evidence") or [])
+    priority_label = None  # only ever set for advance_to_in_progress, below -- see ProposedAction's own note
 
     if action_type not in _ALL_KNOWN_ACTION_TYPES:
         safe = False
@@ -287,8 +320,23 @@ def _classify_action(raw: dict) -> dict:
         safe = False
         requires_attention = False
     elif action_type == "advance_to_in_progress":
-        safe, extra_evidence, _order = _revalidate_order_for_action(action_type, order_id)
+        safe, extra_evidence, order = _revalidate_order_for_action(action_type, order_id)
         evidence.extend(extra_evidence)
+        # Priority label/reason surfaced as evidence (Pickup Date + Order
+        # Priority, Phase 2) -- purely informational, reuses the order
+        # _revalidate_order_for_action already fetched fresh (no extra
+        # read), and never influences `safe` itself, which is decided
+        # entirely above by the real transition graph + production-timing
+        # rule -- priority is decision support, not an authorization.
+        if order is not None:
+            priority_result = priority_service.compute_priority(order)
+            # priority_label (the structured field) stays exactly what
+            # priority_service returned -- None for "no priority level"
+            # (matches its own contract, and the Back Office's), never the
+            # human-readable "NEEDS INFO" stand-in used only in evidence
+            # text below.
+            priority_label = priority_result["priority"]
+            evidence.append(f"Priority: {priority_label or 'NEEDS INFO'} — {priority_result['reason']}")
         requires_attention = not safe
     else:
         # create_customer_update_draft / create_staff_note_draft: low-risk,
@@ -312,6 +360,7 @@ def _classify_action(raw: dict) -> dict:
         "confidence": raw.get("confidence") if isinstance(raw.get("confidence"), int) else 0,
         "safeToExecute": safe,
         "requiresManagerAttention": requires_attention,
+        "priority": priority_label,
     }
 
 

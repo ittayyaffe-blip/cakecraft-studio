@@ -12,6 +12,7 @@ runs for real.
 """
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from fastapi import BackgroundTasks
@@ -19,6 +20,15 @@ from fastapi import BackgroundTasks
 from app.api.routes import orders
 from app.schemas.order import OrderCreateRequest
 from app.services import payment_service
+
+# 60 days out is never inside ANY collection's minimum lead time (Wedding's
+# is the longest at 14 days) -- keeps these route-orchestration tests from
+# needing to reason about rush-note content, which has its own dedicated
+# tests. A weekday far enough out that "is it a Monday" isn't a concern
+# either way, since validate_pickup_datetime/annotate_notes_with_rush_
+# warning are mocked below, not exercised for real, in every test that
+# calls create_order_route directly.
+_FUTURE_PICKUP = datetime.now(timezone.utc) + timedelta(days=60)
 
 _REQUEST = OrderCreateRequest(
     template_id="template-1",
@@ -30,6 +40,8 @@ _REQUEST = OrderCreateRequest(
     customer_phone="+33 6 12 34 56 78",
     customer_email="jane@example.com",
     notes=None,
+    pickup_date=_FUTURE_PICKUP.date(),
+    pickup_time=_FUTURE_PICKUP.time().replace(microsecond=0),
 )
 
 _JOINED_ORDER = {
@@ -47,6 +59,8 @@ _JOINED_ORDER_WITH_NOTES = {**_JOINED_ORDER, "id": "order-2", "notes": "Is it a 
 def test_create_order_route_drafts_an_order_received_notification():
     with (
         patch.object(orders, "create_order", return_value="order-1") as mock_create_order,
+        patch.object(orders.order_service, "validate_pickup_datetime", return_value=None),
+        patch.object(orders.order_service, "annotate_notes_with_rush_warning", return_value=None),
         patch.object(orders.order_service, "get_order_by_id", return_value=_JOINED_ORDER) as mock_get_order,
         patch.object(orders.notification_service, "create_notification_for_order_event") as mock_create_notif,
         patch.object(orders.inbound_service, "process_order_note") as mock_process_note,
@@ -54,7 +68,11 @@ def test_create_order_route_drafts_an_order_received_notification():
         response = orders.create_order_route(_REQUEST)
 
     assert response == {"orderId": "order-1"}
-    mock_create_order.assert_called_once_with(_REQUEST.model_dump())
+    mock_create_order.assert_called_once_with(
+        {**_REQUEST.model_dump(), "notes": None},
+        pickup_date=_REQUEST.pickup_date.isoformat(),
+        pickup_time=_REQUEST.pickup_time.isoformat(),
+    )
     mock_get_order.assert_called_once_with("order-1")
     # The correct, freshly-fetched (joined) order and the "pending" status
     # -- never the raw request payload, never a guessed status.
@@ -71,6 +89,8 @@ def test_create_order_route_still_returns_order_id_when_notification_drafting_fa
     # had a bad moment.
     with (
         patch.object(orders, "create_order", return_value="order-1"),
+        patch.object(orders.order_service, "validate_pickup_datetime", return_value=None),
+        patch.object(orders.order_service, "annotate_notes_with_rush_warning", return_value=None),
         patch.object(orders.order_service, "get_order_by_id", side_effect=RuntimeError("db hiccup")),
         patch.object(orders.notification_service, "create_notification_for_order_event") as mock_create_notif,
         patch.object(orders.inbound_service, "process_order_note") as mock_process_note,
@@ -86,6 +106,8 @@ def test_create_order_route_still_returns_order_id_when_notification_drafting_fa
 def test_create_order_route_processes_a_non_blank_note_via_the_existing_inbound_pipeline():
     with (
         patch.object(orders, "create_order", return_value="order-2"),
+        patch.object(orders.order_service, "validate_pickup_datetime", return_value=None),
+        patch.object(orders.order_service, "annotate_notes_with_rush_warning", return_value=None),
         patch.object(orders.order_service, "get_order_by_id", return_value=_JOINED_ORDER_WITH_NOTES),
         patch.object(orders.notification_service, "create_notification_for_order_event"),
         patch.object(orders.inbound_service, "process_order_note") as mock_process_note,
@@ -101,6 +123,8 @@ def test_create_order_route_still_returns_order_id_when_note_processing_fails():
     # the inbound/AI pipeline must never fail order creation itself.
     with (
         patch.object(orders, "create_order", return_value="order-2"),
+        patch.object(orders.order_service, "validate_pickup_datetime", return_value=None),
+        patch.object(orders.order_service, "annotate_notes_with_rush_warning", return_value=None),
         patch.object(orders.order_service, "get_order_by_id", return_value=_JOINED_ORDER_WITH_NOTES),
         patch.object(orders.notification_service, "create_notification_for_order_event"),
         patch.object(orders.inbound_service, "process_order_note", side_effect=RuntimeError("Anthropic is down")),
@@ -111,13 +135,53 @@ def test_create_order_route_still_returns_order_id_when_note_processing_fails():
 
 
 def test_create_order_route_returns_404_when_template_not_found():
-    with patch.object(orders, "create_order", return_value=None):
+    with (
+        patch.object(orders, "create_order", return_value=None),
+        patch.object(orders.order_service, "validate_pickup_datetime", return_value=None),
+        patch.object(orders.order_service, "annotate_notes_with_rush_warning", return_value=None),
+    ):
         try:
             orders.create_order_route(_REQUEST)
         except Exception as exc:
             assert getattr(exc, "status_code", None) == 404
         else:
             raise AssertionError("expected an HTTPException(404) when create_order returns None")
+
+
+# --- Pickup Date + Order Priority, Phase 2: the route actually rejects -----
+# (validate_pickup_datetime's own rules are exhaustively covered in
+# test_order_service.py -- this just proves the route wires a real
+# rejection into an HTTPException(400), client-safe, before create_order
+# is ever called.)
+
+
+def test_create_order_route_rejects_a_past_pickup_with_400_and_never_creates():
+    past_request = OrderCreateRequest(
+        **{**_REQUEST.model_dump(), "pickup_date": (datetime.now(timezone.utc) - timedelta(days=1)).date()},
+    )
+    with patch.object(orders, "create_order") as mock_create_order:
+        try:
+            orders.create_order_route(past_request)
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 400
+            assert "past" in str(exc.detail).lower()
+        else:
+            raise AssertionError("expected an HTTPException(400) for a past pickup date/time")
+    mock_create_order.assert_not_called()
+
+
+def test_create_order_route_rejects_malformed_pickup_date_with_a_clean_422_not_a_stack_trace():
+    # Pydantic's own type coercion (date/time fields on OrderCreateRequest)
+    # rejects a malformed value before this ever reaches order_service --
+    # a clean validation error, not an unhandled exception.
+    from pydantic import ValidationError
+
+    try:
+        OrderCreateRequest(**{**_REQUEST.model_dump(), "pickup_date": "not-a-date"})
+    except ValidationError as exc:
+        assert any(err["loc"] == ("pickup_date",) for err in exc.errors())
+    else:
+        raise AssertionError("expected a pydantic ValidationError for a malformed pickup_date")
 
 
 # --- GET /orders/{id} -- minimal public order view (payment.html) ----------

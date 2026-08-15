@@ -1313,6 +1313,23 @@ h3 {
   flex-shrink: 0;
 }
 
+/* Pickup scheduling (Pickup Date + Order Priority, Phase 2) */
+.form-hint {
+  margin: 0 0 var(--space-3);
+  font-size: 0.9rem;
+  color: var(--color-brown-soft);
+}
+
+.form-warning {
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-ivory-dark);
+  border: 1px solid var(--color-gold-light);
+  border-radius: var(--radius);
+  font-size: 0.88rem;
+  color: #7a5a2e;
+}
+
 .allergy-confirm__note {
   margin: var(--space-2) 0 0;
   font-size: 0.85rem;

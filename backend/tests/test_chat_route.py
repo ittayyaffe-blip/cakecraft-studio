@@ -119,7 +119,8 @@ def test_order_finds_or_creates_the_customer_and_hands_off_with_the_draft():
         {"id": "cust-1", "name": "Jane Doe", "email": "jane@example.com"},
         {
             "templateId": "tpl-1", "cakeSizeId": None, "flavorId": None, "fillingId": None,
-            "frostingId": None, "phone": None, "specialRequestNote": None, "awaitingOrderConfirmation": False,
+            "frostingId": None, "phone": None, "pickupDate": None, "pickupTime": None,
+            "specialRequestNote": None, "awaitingOrderConfirmation": False,
         },
         trigger_context=None,
     )

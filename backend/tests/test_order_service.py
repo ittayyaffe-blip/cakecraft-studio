@@ -109,6 +109,91 @@ def test_inactive_frosting_cannot_be_ordered():
     _assert_rejected({**_OPTIONS, "frostings": []})
 
 
+# --- Pickup scheduling (Pickup Date + Order Priority, Phase 2) -------------
+
+from datetime import date, datetime, time, timedelta, timezone  # noqa: E402
+
+_NOW = datetime.now(timezone.utc)
+
+
+def _next_weekday(target_weekday: int, *, at_least_days_out: int = 1) -> date:
+    """First date >= today + at_least_days_out that falls on the given
+    weekday (Monday=0) -- avoids a hardcoded date that would go stale.
+    """
+    candidate = _NOW.date() + timedelta(days=at_least_days_out)
+    while candidate.weekday() != target_weekday:
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def test_past_pickup_datetime_is_rejected():
+    yesterday = (_NOW - timedelta(days=1)).date()
+    error = order_service.validate_pickup_datetime(yesterday, time(12, 0))
+    assert error is not None
+    assert "past" in error.lower()
+
+
+def test_monday_pickup_is_rejected():
+    monday = _next_weekday(0, at_least_days_out=7)  # 0 = Monday
+    error = order_service.validate_pickup_datetime(monday, time(12, 0))
+    assert error is not None
+    assert "monday" in error.lower()
+
+
+def test_pickup_time_before_opening_is_rejected():
+    tuesday = _next_weekday(1, at_least_days_out=7)
+    error = order_service.validate_pickup_datetime(tuesday, time(8, 59))
+    assert error is not None
+
+
+def test_pickup_time_after_closing_is_rejected():
+    tuesday = _next_weekday(1, at_least_days_out=7)
+    error = order_service.validate_pickup_datetime(tuesday, time(18, 1))
+    assert error is not None
+
+
+def test_pickup_time_at_open_and_close_boundaries_is_accepted():
+    tuesday = _next_weekday(1, at_least_days_out=7)
+    assert order_service.validate_pickup_datetime(tuesday, time(9, 0)) is None
+    assert order_service.validate_pickup_datetime(tuesday, time(18, 0)) is None
+
+
+def test_valid_future_non_monday_pickup_is_accepted():
+    tuesday = _next_weekday(1, at_least_days_out=30)
+    assert order_service.validate_pickup_datetime(tuesday, time(12, 0)) is None
+
+
+def test_rush_warning_appended_when_inside_category_minimum_lead_time():
+    soon = _NOW.date() + timedelta(days=1)  # 1 day out -- inside every collection's minimum
+    with patch.object(order_service, "get_template_by_id", return_value={"category": "Wedding"}):
+        result = order_service.annotate_notes_with_rush_warning("tpl-1", "Please make it blue.", soon)
+    assert "Please make it blue." in result
+    assert "rush" in result.lower()
+    assert "wedding" in result.lower()
+
+
+def test_no_rush_warning_when_outside_category_minimum_lead_time():
+    far_out = _NOW.date() + timedelta(days=60)
+    with patch.object(order_service, "get_template_by_id", return_value={"category": "Wedding"}):
+        result = order_service.annotate_notes_with_rush_warning("tpl-1", "Please make it blue.", far_out)
+    assert result == "Please make it blue."
+
+
+def test_rush_warning_with_no_existing_notes_returns_just_the_warning():
+    soon = _NOW.date() + timedelta(days=1)
+    with patch.object(order_service, "get_template_by_id", return_value={"category": "Corporate"}):
+        result = order_service.annotate_notes_with_rush_warning("tpl-1", None, soon)
+    assert result is not None
+    assert "rush" in result.lower()
+
+
+def test_rush_warning_gracefully_skipped_for_unknown_template():
+    soon = _NOW.date() + timedelta(days=1)
+    with patch.object(order_service, "get_template_by_id", return_value=None):
+        result = order_service.annotate_notes_with_rush_warning("tpl-missing", "Notes.", soon)
+    assert result == "Notes."
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

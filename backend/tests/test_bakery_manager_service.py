@@ -215,7 +215,7 @@ def test_planning_prompt_only_lists_eligible_confirmed_orders_not_the_full_backl
             {**_ORDER_PICKUP_FAR, "_productionStartEligible": False, "_evidence": ["too far out"]},
             {**_ORDER_NO_PICKUP, "_productionStartEligible": False, "_evidence": ["no pickup date"]},
         ],
-        "in_progress_orders": [], "ready_orders": [], "knowledge": [],
+        "in_progress_orders": [], "ready_orders": [], "priority_candidates": [], "knowledge": [],
     }
     prompt = bms._build_planning_prompt(context)
     assert _ORDER_PICKUP_SOON["id"] in prompt
@@ -223,23 +223,43 @@ def test_planning_prompt_only_lists_eligible_confirmed_orders_not_the_full_backl
     assert _ORDER_NO_PICKUP["id"] not in prompt
 
 
-def test_planning_prompt_bounds_in_progress_and_ready_orders_to_the_high_priority_set():
-    # The other half of the same fix: in_progress/ready orders (never
-    # executable regardless of what Claude proposes) used to be dumped in
-    # full -- up to ~28 orders on a normal day. Now the prompt only shows
-    # the SAME bounded "needs attention today" set the Daily Briefing
-    # already computes (briefing_service._high_priority_orders(), limit=5)
-    # -- no new query, no new threshold.
+def test_planning_prompt_renders_only_the_precomputed_priority_candidates():
+    # Bounding itself now happens upstream in _priority_flagged_candidates
+    # (see its own dedicated tests below) -- _build_planning_prompt just
+    # renders whatever context["priority_candidates"] already is, and must
+    # never fall back to the full in_progress/ready lists if that's bigger.
     many_in_progress = [{**_ORDER_PICKUP_SOON, "id": f"noisy-{i}"} for i in range(20)]
     context = {
-        "briefing": {**_FAKE_BRIEFING, "highPriorityOrders": [
-            {"id": "urgent-1", "customerName": "Priority Customer", "templateName": "Rush Cake", "status": "in_progress", "reason": "Pickup due today"},
-        ]},
-        "confirmed_orders": [], "in_progress_orders": many_in_progress, "ready_orders": [], "knowledge": [],
+        "briefing": _FAKE_BRIEFING,
+        "confirmed_orders": [],
+        "in_progress_orders": many_in_progress, "ready_orders": [],
+        "priority_candidates": [{**_ORDER_PICKUP_SOON, "id": "urgent-1", "_priority": "CRITICAL", "_priorityReason": "Pickup is today."}],
+        "knowledge": [],
     }
     prompt = bms._build_planning_prompt(context)
     assert "urgent-1" in prompt
     assert "noisy-0" not in prompt  # the unbounded backlog never reaches the prompt
+
+
+def test_priority_flagged_candidates_bounds_to_critical_and_high_only():
+    orders = [
+        {**_ORDER_PICKUP_SOON, "id": "high-1", "status": "in_progress"},  # 1 day out -> HIGH
+        {**_ORDER_PICKUP_FAR, "id": "normal-1", "status": "ready"},  # far out -> NORMAL/LOW, excluded
+        {**_ORDER_NO_PICKUP, "id": "needs-info-1", "status": "in_progress"},  # missing date -> excluded (an exception, not a priority)
+    ]
+    candidates = bms._priority_flagged_candidates(orders)
+    ids = [o["id"] for o in candidates]
+    assert "high-1" in ids
+    assert "normal-1" not in ids
+    assert "needs-info-1" not in ids
+
+
+def test_priority_flagged_candidates_respects_the_limit_and_critical_first_order():
+    critical = {**_ORDER_PICKUP_SOON, "id": "crit-1", "status": "ready", "pickup_date": _TODAY.isoformat()}
+    high_orders = [{**_ORDER_PICKUP_SOON, "id": f"high-{i}", "status": "in_progress"} for i in range(6)]
+    candidates = bms._priority_flagged_candidates(high_orders + [critical], limit=5)
+    assert len(candidates) == 5
+    assert candidates[0]["id"] == "crit-1"  # CRITICAL sorts before HIGH regardless of list order
 
 
 def test_claude_timeout_still_surfaces_the_deterministic_pickup_date_exceptions():
@@ -337,6 +357,47 @@ def test_claude_cannot_propose_a_transition_out_of_the_allowed_graph():
     with patch.object(bms.order_service, "get_order_by_id", return_value={"id": "order-completed", "status": "completed", "pickup_date": _TODAY.isoformat()}):
         result = bms._classify_action({"actionType": "advance_to_in_progress", "orderId": "order-completed", "reason": "go", "confidence": 90})
     assert result["safeToExecute"] is False
+
+
+def test_advance_to_in_progress_evidence_includes_the_shared_priority_label():
+    # Part of Pickup Date + Order Priority, Phase 2: the same priority
+    # label/reason the Back Office and RAG use is surfaced as evidence --
+    # informational only, never read back as an authorization (safe is
+    # still decided entirely by _revalidate_order_for_action above it).
+    with patch.object(bms.order_service, "get_order_by_id", return_value=_ORDER_PICKUP_SOON):
+        result = bms._classify_action({"actionType": "advance_to_in_progress", "orderId": "order-1", "reason": "go", "confidence": 90})
+    assert result["safeToExecute"] is True
+    assert any(line.startswith("Priority: HIGH") for line in result["evidence"])
+
+
+def test_classified_action_carries_the_structured_priority_field():
+    # The ProposedAction.priority field (not just the evidence line) --
+    # used by the frontend for a real badge, not string-parsed evidence.
+    # Stays exactly what priority_service returns: None for the missing-
+    # pickup-date case, never a "NEEDS INFO" placeholder string (that
+    # wording is only ever in the human-readable evidence text).
+    with patch.object(bms.order_service, "get_order_by_id", return_value=_ORDER_PICKUP_SOON):
+        result = bms._classify_action({"actionType": "advance_to_in_progress", "orderId": "order-1", "reason": "go", "confidence": 90})
+    assert result["priority"] == "HIGH"
+
+    with patch.object(bms.order_service, "get_order_by_id", return_value=_ORDER_NO_PICKUP):
+        result = bms._classify_action({"actionType": "advance_to_in_progress", "orderId": "order-3", "reason": "go", "confidence": 90})
+    assert result["priority"] is None
+
+
+def test_priority_service_is_the_one_source_computing_evidence_not_a_reimplementation():
+    # Proves delegation, not a parallel calculation: patching
+    # priority_service.compute_priority changes what shows up in the
+    # evidence, confirming _classify_action actually calls it rather than
+    # deriving the label some other way.
+    fake_result = {"priority": "CRITICAL", "reason": "Patched reason for this test.", "manager_attention": True}
+    with (
+        patch.object(bms.order_service, "get_order_by_id", return_value=_ORDER_PICKUP_SOON),
+        patch.object(bms.priority_service, "compute_priority", return_value=fake_result) as mock_compute,
+    ):
+        result = bms._classify_action({"actionType": "advance_to_in_progress", "orderId": "order-1", "reason": "go", "confidence": 90})
+    mock_compute.assert_called_once_with(_ORDER_PICKUP_SOON)
+    assert any("Patched reason for this test." in line for line in result["evidence"])
 
 
 # --- EXECUTE ---------------------------------------------------------------

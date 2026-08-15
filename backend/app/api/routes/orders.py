@@ -19,8 +19,23 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 
 @router.post("", response_model=OrderCreateResponse)
 def create_order_route(order: OrderCreateRequest):
+    # Backend is authoritative (Pickup Date + Order Priority, Phase 2):
+    # past/Monday/hours are hard rules, checked here regardless of
+    # whatever the frontend's own (UX-convenience-only) validation
+    # already did — see order_service.validate_pickup_datetime's own
+    # docstring for why this isn't inside create_order() itself.
+    validation_error = order_service.validate_pickup_datetime(order.pickup_date, order.pickup_time)
+    if validation_error:
+        raise HTTPException(status_code=400, detail=validation_error)
+
+    notes = order_service.annotate_notes_with_rush_warning(order.template_id, order.notes, order.pickup_date)
+
     try:
-        order_id = create_order(order.model_dump())
+        order_id = create_order(
+            {**order.model_dump(), "notes": notes},
+            pickup_date=order.pickup_date.isoformat(),
+            pickup_time=order.pickup_time.isoformat(),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception:
