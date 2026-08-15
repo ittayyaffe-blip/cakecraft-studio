@@ -443,6 +443,22 @@ h3 {
   background: var(--color-gold);
 }
 
+/* Product/brand feature badge (100% Gluten-Free) -- same pill language as
+   the admin status badges elsewhere in this project, sized for the hero's
+   dark scrim background rather than the admin panel's light one. */
+.hero__badge {
+  display: inline-block;
+  margin-top: var(--space-2);
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--color-gold);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-ivory);
+  background: rgba(198, 161, 91, 0.18);
+}
+
 .hero__subtitle {
   margin-top: var(--space-3);
   font-size: clamp(1.05rem, 1rem + 0.3vw, 1.3rem);
@@ -1220,6 +1236,33 @@ h3 {
 
 .policy-disclosure p + p {
   margin-top: var(--space-2);
+}
+
+/* Mandatory allergy confirmation (Section F) -- the checkbox itself is a
+   plain native required checkbox inside #customerInfoForm, so the
+   existing form.checkValidity() gate in customer-information.js already
+   blocks Submit until it's checked, no new JS needed. Styling only. */
+.allergy-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: 0.95rem;
+  color: var(--color-brown);
+}
+
+.allergy-confirm input[type="checkbox"] {
+  margin-top: 0.2rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  flex-shrink: 0;
+}
+
+.allergy-confirm__note {
+  margin: var(--space-2) 0 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--color-brown-soft);
 }
 
 #customer-info #submitOrderBtn {

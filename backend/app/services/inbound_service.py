@@ -249,34 +249,22 @@ def _draft_reply_and_update(inbound: dict, customer: dict, order: dict | None, o
 
 
 def _is_continuing_whatsapp_order(customer_id: str, before_created_at: str) -> bool:
-    """Was the customer's most recent prior WhatsApp message part of an
-    active assisted-order conversation that hasn't resulted in a created
-    order yet? Reuses the existing `inbound_messages.intent`/`order_id`
-    columns as the state signal — no new storage, no new table. The
-    FIRST order-related WhatsApp message always goes through the normal
-    classify-and-draft path below unchanged (so it gets the Website
-    First framing from agent_service._classify_and_respond, same as
-    chat's first message) — it's the real `intent="NEW_ORDER_INQUIRY"`
-    that path already sets on that row, before this connector existed,
-    that this checks for. process_inbound_whatsapp_order_turn keeps
-    setting the same intent on every later turn too, so a multi-message
-    ordering conversation keeps recognizing itself, right up until an
-    `order_id` actually lands on one of those rows.
+    """Always False as of the Final Customer Policy Pass (Section C/6-9):
+    WhatsApp is assistance-only now, never a slot-filling ordering
+    conversation ("we do NOT want to recreate the long Chat ordering
+    journey in Email or WhatsApp" — Chat remains the one richer channel).
+    process_inbound_whatsapp_order_turn (the function this used to gate)
+    is left in place, deliberately unused, rather than deleted — the
+    smallest change that reliably retires the behavior without touching
+    its own still-valid unit tests or the webhook wiring around it.
+
+    Previously: reused `inbound_messages.intent`/`order_id` as the state
+    signal for "was the last WhatsApp message part of an unfinished
+    assisted order" — no longer consulted now that this always returns
+    False, but the columns themselves are still written for other reasons
+    (e.g. order matching) and untouched by this change.
     """
-    response = (
-        supabase.table("inbound_messages")
-        .select("intent, order_id")
-        .eq("customer_id", customer_id)
-        .eq("channel", "whatsapp")
-        .lt("created_at", before_created_at)
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
-    )
-    if not response.data:
-        return False
-    last = response.data[0]
-    return last.get("intent") == "NEW_ORDER_INQUIRY" and not last.get("order_id")
+    return False
 
 
 def process_inbound_whatsapp_order_turn(inbound: dict, customer: dict) -> dict:
@@ -316,13 +304,15 @@ def process_inbound_whatsapp_order_turn(inbound: dict, customer: dict) -> dict:
 
 def _process_and_draft(inbound: dict) -> dict:
     """Customer identification -> order matching, then hand off to
-    _draft_reply_and_update — or, for a WhatsApp message continuing an
-    active assisted-order conversation, to process_inbound_whatsapp_
-    order_turn instead (see _is_continuing_whatsapp_order). Never
-    raises: an identification/matching failure still leaves the
-    *original* inbound message intact with ai_status left "failed", the
-    same fail-open contract _draft_reply_and_update independently
-    provides for the step after.
+    _draft_reply_and_update. The `process_inbound_whatsapp_order_turn`
+    branch below is now permanently inert (_is_continuing_whatsapp_order
+    always returns False as of the Final Customer Policy Pass — WhatsApp
+    is assistance-only) — left in the code rather than removed, the
+    smallest change that reliably retires the behavior. Never raises: an
+    identification/matching failure still leaves the *original* inbound
+    message intact with ai_status left "failed", the same fail-open
+    contract _draft_reply_and_update independently provides for the step
+    after.
     """
     try:
         customer, _customer_ambiguous = _identify_customer(inbound["channel"], inbound["sender_identifier"])

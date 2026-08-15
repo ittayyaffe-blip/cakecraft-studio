@@ -1083,6 +1083,76 @@ def test_pending_order_reply_recaps_the_real_cake_selections():
     assert "Buttercream" in result["reply"]  # frosting
 
 
+# --- Final Customer Policy Pass: mandatory allergy confirmation (F/G/H) ----
+# Two independent, deterministic behaviors, neither trusted to Claude:
+# (1) a disclosed food allergy blocks automated ordering outright, on any
+#     turn, before Claude is even called;
+# (2) once the order is otherwise complete, the mandatory allergy
+#     confirmation is deterministically folded into the same final "shall
+#     I place this order?" ask -- Python-appended text, not dependent on
+#     Claude's own prompt-following.
+
+
+def test_allergy_mention_bypasses_claude_and_blocks_order_creation():
+    with (
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+        patch.object(agent_service.order_service, "create_order") as mock_create_order,
+    ):
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
+        result = agent_service.run_order_assistant_turn(
+            "I have a nut allergy, can I still order the chocolate cake?", None, _CUSTOMER,
+        )
+
+    mock_anthropic_cls.assert_not_called()  # Claude never gets a chance to decide it's safe
+    mock_create_order.assert_not_called()
+    assert result["order_created"] is False
+    assert result["order_id"] is None
+    assert result["reply"] == agent_service._ALLERGY_ORDER_BLOCKED_MESSAGE
+    assert "contact us directly" in result["reply"].lower()
+
+
+def test_allergy_mention_at_the_final_confirmation_step_still_blocks_the_order():
+    # Even when every field is already known and the message otherwise
+    # reads like a confirmation, a disclosed allergy wins -- Claude never
+    # gets to "approve an exception".
+    awaiting_draft = {**_MEDIUM_CONFIRMATION_DRAFT, "awaitingOrderConfirmation": True}
+    result, mock_create_order, mock_notify, _sb = _run(
+        "yes please go ahead, though I do have an egg allergy",
+        awaiting_draft,
+        {"confirmedNow": True, "reply": "should never be seen"},
+    )
+    assert result["order_created"] is False
+    mock_create_order.assert_not_called()
+    mock_notify.assert_not_called()
+    assert result["reply"] == agent_service._ALLERGY_ORDER_BLOCKED_MESSAGE
+
+
+def test_final_summary_deterministically_includes_the_allergy_confirmation():
+    # All fields known, not yet confirmed -- Python appends the mandatory
+    # allergy line itself, regardless of what Claude's own "reply" says.
+    result, mock_create_order, _, _sb = _run(
+        "great", _MEDIUM_CONFIRMATION_DRAFT, {"reply": "Everything looks great! Shall I place this order?"},
+    )
+    assert result["order_created"] is False
+    mock_create_order.assert_not_called()
+    assert "food allerg" in result["reply"].lower()
+
+
+def test_allergy_confirmation_is_not_repeated_in_the_success_message():
+    # Once genuinely confirmed, the order-created message fully replaces
+    # reply_text (same as the price note) -- the allergy line only belongs
+    # in the pre-confirmation ask, not the post-creation summary.
+    awaiting_draft = {**_MEDIUM_CONFIRMATION_DRAFT, "awaitingOrderConfirmation": True}
+    result, mock_create_order, _, _sb = _run(
+        "please do", awaiting_draft, {"confirmedNow": True, "reply": "..."},
+    )
+    assert result["order_created"] is True
+    mock_create_order.assert_called_once()
+    assert "food allerg" not in result["reply"].lower()
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

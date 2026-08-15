@@ -803,40 +803,31 @@ def test_list_channel_messages_for_customer_filters_by_customer_and_channel():
     assert result == rows
 
 
-# --- WhatsApp assisted-ordering connector (Final Ordering Policy §12-14) ---
-# The minimum connector: reuses agent_service.run_order_assistant_turn
-# (same slot/confirmation/pricing logic chat already uses) and existing
-# inbound_messages/notifications state (inbound_messages.intent/order_id
-# as the "am I mid-order" signal) -- no new table, no new adapter, no
-# auto-send.
+# --- WhatsApp assisted-ordering connector -----------------------------
+# process_inbound_whatsapp_order_turn (the minimum connector reusing
+# agent_service.run_order_assistant_turn) is left in place but no longer
+# reachable: Final Customer Policy Pass, Section C/6-9 makes WhatsApp
+# assistance-only, never a slot-filling ordering conversation. Chat
+# remains the one channel that continues an in-progress order.
+# _is_continuing_whatsapp_order now always returns False, regardless of
+# what's in inbound_messages -- see its own docstring.
 
 
-def test_is_continuing_whatsapp_order_true_when_last_message_was_an_unfulfilled_order_inquiry():
+def test_is_continuing_whatsapp_order_always_false_even_for_an_unfulfilled_order_inquiry():
+    # This is the exact row shape that used to mean "yes, keep going" --
+    # confirming the new policy wins even then, not just in the trivial
+    # no-prior-message case.
     query = _self_chaining_query_mock(SimpleNamespace(data=[{"intent": "NEW_ORDER_INQUIRY", "order_id": None}]))
     with patch.object(inbound_service, "supabase") as mock_supabase:
         mock_supabase.table.return_value = query
-        assert inbound_service._is_continuing_whatsapp_order("cust-1", "2026-01-01T00:00:00Z") is True
-
-
-def test_is_continuing_whatsapp_order_false_once_an_order_was_already_created():
-    query = _self_chaining_query_mock(SimpleNamespace(data=[{"intent": "NEW_ORDER_INQUIRY", "order_id": "order-1"}]))
-    with patch.object(inbound_service, "supabase") as mock_supabase:
-        mock_supabase.table.return_value = query
         assert inbound_service._is_continuing_whatsapp_order("cust-1", "2026-01-01T00:00:00Z") is False
-
-
-def test_is_continuing_whatsapp_order_false_for_an_unrelated_prior_message():
-    query = _self_chaining_query_mock(SimpleNamespace(data=[{"intent": "PRODUCT_QUESTION", "order_id": None}]))
-    with patch.object(inbound_service, "supabase") as mock_supabase:
-        mock_supabase.table.return_value = query
-        assert inbound_service._is_continuing_whatsapp_order("cust-1", "2026-01-01T00:00:00Z") is False
+        # Never even queries inbound_messages any more -- there's nothing
+        # left to check once the answer is unconditionally False.
+        mock_supabase.table.assert_not_called()
 
 
 def test_is_continuing_whatsapp_order_false_with_no_prior_message():
-    query = _self_chaining_query_mock(SimpleNamespace(data=[]))
-    with patch.object(inbound_service, "supabase") as mock_supabase:
-        mock_supabase.table.return_value = query
-        assert inbound_service._is_continuing_whatsapp_order("cust-1", "2026-01-01T00:00:00Z") is False
+    assert inbound_service._is_continuing_whatsapp_order("cust-1", "2026-01-01T00:00:00Z") is False
 
 
 def test_process_inbound_whatsapp_order_turn_preserves_existing_customer_identity():

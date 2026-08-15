@@ -1892,6 +1892,45 @@ def test_fast_path_omits_the_size_line_when_no_guest_count_is_mentioned():
     assert "serves" not in reply.lower()  # nothing to compute a size from -- never guessed
 
 
+def test_fast_path_chat_reply_still_offers_to_continue_here():
+    # Chat is the one channel that actually continues an in-conversation
+    # order (run_order_assistant_turn) -- the default (include_continue_
+    # here=True) reflects that.
+    reply = agent_service._fast_path_new_order_reply("I want to order a wedding cake for 15 people")
+    assert "continue right here" in reply.lower()
+
+
+def test_fast_path_whatsapp_email_reply_is_assistance_only():
+    # Final Customer Policy Pass, Section C/6-9: WhatsApp/Email must never
+    # promise an ordering conversation that doesn't continue automatically
+    # on those channels any more.
+    reply = agent_service._fast_path_new_order_reply(
+        "I want to order a wedding cake for 15 people", include_continue_here=False
+    )
+    assert "continue right here" not in reply.lower()
+    assert "reply here" in reply.lower()
+    assert "templates.html?collection=Wedding" in reply  # still gets the real collection link
+
+
+def test_draft_reply_to_inbound_message_new_order_fast_path_is_assistance_only():
+    # Integration through the real WhatsApp/Email entry point -- proves
+    # _classify_and_respond actually wires is_chat through, not just that
+    # the helper function itself supports the flag.
+    with patch.object(agent_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(
+            channel="whatsapp", status="draft"
+        )
+        result = agent_service.draft_reply_to_inbound_message(
+            _fake_inbound_message(channel="whatsapp", body="I'd like to order a birthday cake"),
+            _FAKE_INBOUND_CUSTOMER,
+            None,
+        )
+
+    assert result["intent"] == "NEW_ORDER_INQUIRY"
+    inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert "continue right here" not in inserted_payload["body"].lower()
+
+
 def test_ambiguous_messages_still_go_through_claude_not_the_fast_path():
     # An existing-order or vague question must never be intercepted --
     # only a clear "start a new order" phrase plus "cake" qualifies.

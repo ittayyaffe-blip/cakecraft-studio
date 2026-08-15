@@ -651,12 +651,21 @@ def _looks_like_obvious_new_order(message: str) -> bool:
     return any(pattern.search(message) for pattern in _NEW_ORDER_INTENT_PATTERNS)
 
 
-def _fast_path_new_order_reply(message: str) -> str:
+def _fast_path_new_order_reply(message: str, *, include_continue_here: bool = True) -> str:
     """Entirely deterministic -- no Claude, no RAG. Same shape as the
     Claude-driven NEW_ORDER_INQUIRY reply (acknowledge + real website
-    link + "continue here too"), built directly from real catalog/
-    guest-count data via the exact same helpers the order-assistant and
-    Website-First prompt already use.
+    link +, for Chat only, "continue here too"), built directly from real
+    catalog/guest-count data via the exact same helpers the order-assistant
+    and Website-First prompt already use.
+
+    `include_continue_here` is False for WhatsApp/Email (see
+    _classify_and_respond's `is_chat`): those channels are assistance-only
+    now (Final Customer Policy Pass, Section C/9) -- Chat is the one place
+    an offer to "continue right here" is actually true, since only Chat
+    (and, before that pass, WhatsApp) drives run_order_assistant_turn's
+    slot-filling flow. WhatsApp/Email instead get an assistance-style
+    close, inviting a reply rather than promising an ordering conversation
+    that no longer continues automatically on those channels.
     """
     category = _detect_category(message)
     greeting = f"We'd love to help with your {category} cake! 🎂" if category else "We'd love to help with that! 🎂"
@@ -674,7 +683,10 @@ def _fast_path_new_order_reply(message: str) -> str:
             )
 
     lines.append(f"You can browse real designs here: {_website_collection_link(message)}")
-    lines.append("Or continue right here and we'll help you build the order.")
+    if include_continue_here:
+        lines.append("Or continue right here and we'll help you build the order.")
+    else:
+        lines.append("If you have any questions along the way, just reply here — we're happy to help.")
     return "\n\n".join(lines)
 
 
@@ -733,6 +745,14 @@ def _classify_and_respond(
     "review_reason": str | None, "subject": str | None, "body": str | None,
     "knowledge_sources": list[dict]}.
     """
+    # Final Customer Policy Pass, Section C/6-9: Chat is the one channel
+    # that still drives an in-conversation slot-filling order (via
+    # run_order_assistant_turn); WhatsApp/Email are assistance-only --
+    # channel_label is "the website chat" only for that one caller
+    # (answer_customer_question), never for a real inbound channel string
+    # (draft_reply_to_inbound_message passes the real "whatsapp"/"email").
+    is_chat = channel_label == "the website chat"
+
     if _looks_like_obvious_new_order(message_body):
         return {
             "ai_status": "drafted",
@@ -743,7 +763,7 @@ def _classify_and_respond(
             ),
             "review_reason": None,
             "subject": "Re: your CakeCraft order",
-            "body": _fast_path_new_order_reply(message_body),
+            "body": _fast_path_new_order_reply(message_body, include_continue_here=is_chat),
             "knowledge_sources": [],
         }
 
@@ -816,6 +836,25 @@ def _classify_and_respond(
     knowledge_context = "\n\n".join(f"[{c['title']}]\n{c['content']}" for c in knowledge)
     history_text = _format_conversation_history(conversation_history)
     website_link = _website_collection_link(message_body)
+
+    # Final Customer Policy Pass, Section C/6-9: Chat still offers to keep
+    # building the order in-conversation (it's the one channel that
+    # actually does); WhatsApp/Email are warm, assistance-only guidance to
+    # the real website collection -- never an offer to run an ordering
+    # conversation that doesn't continue automatically on those channels.
+    new_order_instruction = (
+        "AND make clear they can also continue placing the order right here in this conversation if they'd "
+        "rather. The customer always has both choices. Never say ordering is ONLY self-service, and never "
+        "say they must use the website."
+        if is_chat
+        else
+        "This is a warm, assistance-style reply, not a slot-filling order form: introduce yourself/greet them "
+        "warmly, mention we offer cakes for birthdays, weddings, graduations and other celebrations, and offer "
+        "to help with questions about designs, sizes, flavors, fillings, frostings, dietary questions, or the "
+        "ordering process along the way. Do NOT attempt to collect order details (design/size/flavor/etc.) or "
+        "run a multi-step ordering conversation in this reply — end by inviting them to reply here with any "
+        "questions."
+    )
 
     prompt = f"""You are the CakeCraft Studio / Maison de Gâteau Paris customer-service assistant, replying
 to one inbound customer message. House tone: warm, personal, and specific.
@@ -891,9 +930,7 @@ to one inbound customer message. House tone: warm, personal, and specific.
 2. If the intent is NEW_ORDER_INQUIRY: canAnswerFromKnowledge=true, requiresHumanReview=false, and "body"
    must: warmly acknowledge what they want, recommend viewing it on the website as the best visual
    experience (real designs, not just a description) with exactly this link — never construct or invent a
-   different URL: {website_link} — AND make clear they can also continue placing the order right here in
-   this conversation if they'd rather. The customer always has both choices. Never say ordering is ONLY
-   self-service, and never say they must use the website.
+   different URL: {website_link} — {new_order_instruction}
 3. Decide what you can answer using ONLY the customer/order data and bakery knowledge above:
    - Fully supported -> canAnswerFromKnowledge=true, requiresHumanReview=false, answer fully.
    - Genuinely ambiguous — you could give a good answer with one clarifying detail, but not without it ->
@@ -1240,6 +1277,41 @@ _CONFIRMATION_KEYWORDS = (
 def _looks_like_confirmation(message: str) -> bool:
     lowered = message.strip().lower()
     return any(keyword in lowered for keyword in _CONFIRMATION_KEYWORDS)
+
+
+# Final Customer Policy Pass, Section F/G/H: customers with a food allergy
+# must not complete the automated ordering process, and Claude must never
+# be the one deciding an allergy is safe to proceed with. Matched BEFORE
+# Claude is ever called for this turn (same "deterministic Python gate,
+# not a Claude judgment" shape as _looks_like_obvious_new_order above) --
+# a simple substring match on "allerg" catches allergy/allergic/allergies
+# with no false-negative risk worth a longer pattern, and a false positive
+# just means an allergy-related message correctly gets the safety reply
+# instead of silently being ordered around.
+_ALLERGY_MENTION_PATTERN = re.compile(r"allerg", re.IGNORECASE)
+
+_ALLERGY_ORDER_BLOCKED_MESSAGE = (
+    "For your safety, we're unable to complete an automated order for customers with food allergies. "
+    "Please contact us directly and we'll be happy to discuss your requirements."
+)
+
+# Shown once every order field is known and the customer hasn't confirmed
+# yet -- deterministically appended by Python (never left to Claude's own
+# prompt-following) so the mandatory allergy confirmation is always part
+# of the same final "shall I place this order?" ask, and the customer's
+# next explicit "yes"/"please do"/etc. (_looks_like_confirmation, the
+# existing independent keyword gate) counts as confirming both the order
+# AND this statement together -- the smaller of the two combined-
+# confirmation designs, no new draft field or Claude JSON field needed.
+_ALLERGY_CONFIRMATION_PROMPT = (
+    "Before I place this order — our bakery is 100% gluten-free, but our kitchen still uses milk, eggs, "
+    "nuts, soy and other common allergens. Please confirm you do not have any food allergies and I'll go "
+    "ahead and place your order."
+)
+
+
+def _mentions_food_allergy(message: str) -> bool:
+    return bool(_ALLERGY_MENTION_PATTERN.search(message))
 
 
 def _normalize_order_draft(draft: dict | None) -> dict:
@@ -1601,6 +1673,25 @@ def run_order_assistant_turn(
             return _insert_inbound_reply(customer, order_for_notification, "whatsapp", "Order Assistant", text)
         return _insert_chat_answer(customer, order_for_notification, "Order Assistant", text)
 
+    # Final Customer Policy Pass, Section F/G/H: a disclosed food allergy
+    # deterministically blocks automated ordering on THIS turn, checked
+    # before Claude is ever called -- Claude never gets a chance to decide
+    # an allergy is safe or approve an exception (see _mentions_food_
+    # allergy's own note). Draft state is left untouched (current, not
+    # updated) -- nothing extracted from this message, no progress lost,
+    # so the customer can pick the order back up with the bakery directly
+    # or, if this was a false match, simply continue.
+    if _mentions_food_allergy(message):
+        notification = _persist_reply(None, _ALLERGY_ORDER_BLOCKED_MESSAGE)
+        return {
+            "reply": _ALLERGY_ORDER_BLOCKED_MESSAGE,
+            "draft": current,
+            "order_created": False,
+            "order_id": None,
+            "notification": notification,
+            "ai_status": "drafted",
+        }
+
     history_text = _format_order_conversation_history(conversation_history)
 
     try:
@@ -1712,6 +1803,19 @@ def run_order_assistant_turn(
     # reply_text instead.
     if not confirmed and (parsed.get("asksAboutPrice") or all_filled):
         reply_text = f"{reply_text}\n\n{_price_note(updated, templates, options)}"
+
+    # Final Customer Policy Pass, Section F/G: the mandatory allergy
+    # confirmation is folded into the SAME final "shall I place this
+    # order?" ask, deterministically appended by Python (never left to
+    # Claude's own prompt-following, see _ALLERGY_CONFIRMATION_PROMPT's
+    # own note) -- the customer's next explicit "yes" (the existing,
+    # independent _looks_like_confirmation gate below) then confirms both
+    # the order and this statement together. Shown every turn the order
+    # is complete but not yet confirmed, same condition as the price note
+    # above, so a customer who keeps adjusting a detail sees it again each
+    # time they reach this state, not just once.
+    if not confirmed and all_filled:
+        reply_text = f"{reply_text}\n\n{_ALLERGY_CONFIRMATION_PROMPT}"
 
     if confirmed:
         try:
