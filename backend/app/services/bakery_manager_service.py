@@ -340,16 +340,34 @@ def get_preview_plan(admin_id: str) -> dict:
 
     try:
         # timeout=30.0 (vs. every other _claude() caller's 12.0 default):
-        # this prompt asks for up to 1500 tokens of structured JSON over
-        # today's full confirmed/in_progress/ready order lists -- the
-        # largest single Claude call in the app -- and was observed timing
-        # out at the shared 12s/1-retry default in production (see
-        # agent_service._claude's own docstring note). max_retries stays
-        # at the shared default (1) -- widening the timeout, not adding
-        # retries, is the targeted fix for a slow-but-eventually-completes
-        # call, not a transient/flaky one.
-        raw = agent_service._claude(_build_planning_prompt(context), max_tokens=1500, timeout=30.0)
+        # this prompt asks for a lot of structured JSON over today's full
+        # confirmed/in_progress/ready order lists -- the largest single
+        # Claude call in the app -- and was observed timing out at the
+        # shared 12s/1-retry default in production (see agent_service.
+        # _claude's own docstring note). max_retries stays at the shared
+        # default (1) -- widening the timeout, not adding retries, is the
+        # targeted fix for a slow-but-eventually-completes call.
+        #
+        # max_tokens=3000 (was 1500): also observed live -- once the
+        # timeout fix above let the call actually complete, it still hit
+        # `stop_reason: max_tokens` at 1500 and got cut off mid-JSON
+        # (confirmed via a real reproduction: input_tokens=6589,
+        # output_tokens=1500 exactly, truncated mid proposedActions
+        # entry). A day with ~20+ confirmed/in_progress/ready orders
+        # genuinely needs more budget than a short prose answer.
+        raw = agent_service._claude(_build_planning_prompt(context), max_tokens=3000, timeout=30.0)
         parsed = agent_service._parse_json_response(raw)
+        if parsed is None:
+            # Claude answered (no exception -- see the except block below
+            # for that case) but the text wasn't valid/complete JSON, most
+            # likely truncated again at a higher order volume. Logged with
+            # metadata only -- run id, length, a truncation heuristic --
+            # never the raw response (which embeds real order/customer
+            # content) and never the prompt.
+            logger.warning(
+                "AI Bakery Manager response failed to parse as JSON (run_id=%s, response_chars=%d, appears_truncated=%s)",
+                run_id, len(raw), not raw.rstrip().endswith("}"),
+            )
     except Exception:
         logger.exception("AI Bakery Manager planning call failed")
         parsed = None

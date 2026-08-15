@@ -179,13 +179,15 @@ def test_claude_failure_falls_back_to_a_clean_plan_not_a_crash():
     assert plan["proposedActions"] == []
 
 
-def test_preview_claude_call_uses_a_longer_timeout_than_the_shared_default():
-    # Real production failure this locks in the fix for: this prompt asks
-    # for up to 1500 tokens of structured JSON over the full live order
-    # lists -- the largest _claude() call in the app -- and was observed
-    # timing out at the 12.0s default every other caller keeps (see
-    # test_agent_service.test_claude_default_timeout_and_retries_are_
-    # exactly_unchanged). max_retries stays at the shared default (1).
+def test_preview_claude_call_uses_a_longer_timeout_and_output_budget_than_the_shared_default():
+    # Two real production failures this locks in the fix for: (1) this
+    # prompt's Claude call was timing out at the 12.0s default every other
+    # caller keeps (see test_agent_service.test_claude_default_timeout_and_
+    # retries_are_exactly_unchanged), fixed with timeout=30.0; (2) once
+    # that let the call complete, it still hit stop_reason=max_tokens at
+    # 1500 and got truncated mid-JSON on a normal-sized order backlog,
+    # fixed with max_tokens=3000. max_retries stays at the shared default
+    # (1) -- neither fix touches retry behavior.
     with (
         patch.object(bms, "record_event"),
         patch.object(bms.briefing_service, "get_daily_briefing", return_value=_FAKE_BRIEFING),
@@ -197,6 +199,7 @@ def test_preview_claude_call_uses_a_longer_timeout_than_the_shared_default():
         bms.get_preview_plan(_ADMIN_ID)
 
     assert mock_claude.call_args.kwargs["timeout"] == 30.0
+    assert mock_claude.call_args.kwargs["max_tokens"] == 3000
     assert "max_retries" not in mock_claude.call_args.kwargs  # inherits the shared default (1), not widened
 
 
@@ -222,6 +225,53 @@ def test_claude_timeout_still_surfaces_the_deterministic_pickup_date_exceptions(
     assert plan["proposedActions"] == []
     assert any(e["type"] == "missing_pickup_date" and e["orderId"] == "order-3" for e in plan["exceptions"])
     assert mock_audit.call_args.kwargs["after"]["reason"] == "ai_call_failed"
+
+
+def _run_preview_with_raw_claude_text(raw_text, *, confirmed=None):
+    confirmed = confirmed if confirmed is not None else [_ORDER_NO_PICKUP]
+    with (
+        patch.object(bms, "record_event") as mock_audit,
+        patch.object(bms, "logger") as mock_logger,
+        patch.object(bms.briefing_service, "get_daily_briefing", return_value=_FAKE_BRIEFING),
+        patch.object(bms.order_service, "list_orders", side_effect=lambda status=None, page_size=100: {
+            "items": confirmed if status == "confirmed" else []
+        }),
+        patch.object(bms.rag_service, "retrieve", return_value=[]),
+        patch.object(bms.agent_service, "is_configured", return_value=True),
+        patch.object(bms.agent_service, "_claude", return_value=raw_text),
+    ):
+        plan = bms.get_preview_plan(_ADMIN_ID)
+    return plan, mock_audit, mock_logger
+
+
+def test_truncated_claude_response_fails_closed_with_no_executable_actions():
+    # The exact second production failure: Claude answers (no exception --
+    # a real, successful API call) but gets cut off mid-JSON before the
+    # outer object closes. This must fail closed, not attempt to salvage
+    # a partial plan.
+    truncated = (
+        '{"operationalSummary": "Busy day.", "proposedActions": '
+        '[{"actionType": "advance_to_in_progress", "orderId": "order-1", "reason": "go'
+    )  # cut off mid-string, no closing braces at all -- exactly the shape observed live
+    plan, mock_audit, _ = _run_preview_with_raw_claude_text(truncated)
+
+    assert plan["proposedActions"] == []  # nothing partially parsed, nothing executable
+    assert plan["operationalSummary"] == "AI Bakery Manager couldn't generate a plan right now — the manual Back Office remains fully available."
+    assert mock_audit.call_args.kwargs["after"]["reason"] == "ai_call_failed"
+    # Deterministic exceptions never depend on Claude succeeding.
+    assert any(e["type"] == "missing_pickup_date" and e["orderId"] == "order-3" for e in plan["exceptions"])
+
+
+def test_parse_failure_logs_a_safe_diagnostic_warning_without_sensitive_content():
+    truncated = '{"operationalSummary": "Busy day.", "proposedActions": [{"actionType": "advance'
+    _plan, _audit, mock_logger = _run_preview_with_raw_claude_text(truncated)
+
+    mock_logger.warning.assert_called_once()
+    logged = " ".join(str(a) for a in mock_logger.warning.call_args.args)
+    # Useful metadata present...
+    assert "order-3" not in logged and "Mei Chen" not in logged  # ...but no order/customer content
+    assert str(len(truncated)) in logged  # response_chars metadata is present
+    mock_logger.exception.assert_not_called()  # this path never raised -- exception logging is a separate branch
 
 
 # --- AI BOUNDARY ---------------------------------------------------------
