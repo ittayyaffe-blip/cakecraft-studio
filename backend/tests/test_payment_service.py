@@ -5,13 +5,17 @@ no real card data, ever). Run from `backend/`:
     python -m tests.test_payment_service
 
 simulate_payment's own orchestration (idempotency, the one automatic
-pending -> confirmed transition, audit, notification) is tested against
-mocked order_service/audit_service/notification_service calls and mocked
-get_or_create_payment/get_payment_for_order -- the exact call boundary
-each already established for their own modules (same convention as
-test_agent_order_assistant.py). get_or_create_payment itself is tested
-separately, directly against a mocked supabase client, to prove its own
-get-or-create logic (the one-payment-row-per-order guarantee).
+pending -> confirmed transition, audit) is tested against mocked
+order_service/audit_service calls and mocked get_or_create_payment/
+get_payment_for_order -- the exact call boundary each already established
+for their own modules (same convention as test_agent_order_assistant.py).
+Notification drafting is no longer called from inside simulate_payment
+(it's now a route-level FastAPI BackgroundTask, see test_orders_route.py)
+-- here we only assert simulate_payment returns the right
+"notification_order" signal (dict on the one call that actually
+transitions the order, None otherwise) for the route to act on.
+get_or_create_payment/_mark_order_confirmed are tested separately,
+directly against a mocked supabase client.
 """
 
 from types import SimpleNamespace
@@ -37,7 +41,6 @@ def _run(
     update_returns_row=True,
     updated_payment=None,
     race_reread_payment=None,
-    confirmed_order=None,
 ):
     order = order if order is not None else {**_ORDER, "id": order_id}
     existing_payment = existing_payment if existing_payment is not None else {**_PENDING_PAYMENT, "order_id": order_id}
@@ -45,24 +48,20 @@ def _run(
         **existing_payment, "status": "paid",
         "paid_at": "2026-08-12T11:00:00+00:00", "simulated_reference": "SIM-NEWPAY001",
     }
-    confirmed_order = confirmed_order if confirmed_order is not None else {**order, "status": "confirmed"}
 
     with (
         patch.object(payment_service.order_service, "get_order_by_id", return_value=order),
         patch.object(payment_service, "get_or_create_payment", return_value=existing_payment) as mock_get_or_create,
         patch.object(payment_service, "get_payment_for_order", return_value=race_reread_payment) as mock_reread,
         patch.object(payment_service, "supabase") as mock_supabase,
-        patch.object(payment_service.order_service, "update_order_status", return_value=confirmed_order) as mock_update_status,
         patch.object(payment_service.audit_service, "record_event") as mock_record_event,
-        patch.object(payment_service.notification_service, "create_notification_for_order_event") as mock_notify,
     ):
         update_chain = mock_supabase.table.return_value.update.return_value.eq.return_value.eq.return_value.execute
         update_chain.return_value = SimpleNamespace(data=[updated_payment] if update_returns_row else [])
         result = payment_service.simulate_payment(order_id)
 
     return result, SimpleNamespace(
-        get_or_create=mock_get_or_create, reread=mock_reread, supabase=mock_supabase,
-        update_status=mock_update_status, audit=mock_record_event, notify=mock_notify,
+        get_or_create=mock_get_or_create, reread=mock_reread, supabase=mock_supabase, audit=mock_record_event,
     )
 
 
@@ -93,10 +92,12 @@ def test_explicit_pay_now_produces_paid_and_moves_pending_to_confirmed():
     result, mocks = _run()
     assert result["payment"]["status"] == "paid"
     assert result["order_status"] == "confirmed"
-    mocks.update_status.assert_called_once_with("order-1", "confirmed")
     mocks.audit.assert_called_once()
     assert mocks.audit.call_args.kwargs["actor_id"] is None  # system-initiated, no staff member
-    mocks.notify.assert_called_once_with({**_ORDER, "status": "confirmed"}, "confirmed")
+    # The route (not this function) drafts the notification, as a
+    # BackgroundTask -- this is the signal it acts on, set exactly when a
+    # transition really happened, with the real order data to draft from.
+    assert result["notification_order"] == {**_ORDER, "status": "confirmed"}
 
 
 def test_payment_does_not_move_an_already_confirmed_order_to_in_progress():
@@ -106,8 +107,8 @@ def test_payment_does_not_move_an_already_confirmed_order_to_in_progress():
     order = {**_ORDER, "status": "confirmed"}
     result, mocks = _run(order=order)
     assert result["order_status"] == "confirmed"
-    mocks.update_status.assert_not_called()
-    mocks.notify.assert_not_called()
+    assert result["notification_order"] is None
+    mocks.audit.assert_not_called()
 
 
 # --- Idempotency: retries/double-clicks never double-charge or duplicate ---
@@ -117,13 +118,17 @@ def test_repeated_payment_is_idempotent_no_second_transition():
     result, mocks = _run(existing_payment=_PAID_PAYMENT)
     assert result["payment"] == _PAID_PAYMENT
     assert result["order_status"] == "pending"  # unchanged -- this call never touched the order
+    assert result["notification_order"] is None
     mocks.supabase.table.return_value.update.assert_not_called()
-    mocks.update_status.assert_not_called()
 
 
 def test_duplicate_payment_does_not_create_a_duplicate_confirmation_notification():
-    _, mocks = _run(existing_payment=_PAID_PAYMENT)
-    mocks.notify.assert_not_called()
+    # notification_order is the ONE signal the route uses to decide
+    # whether to schedule a background notification draft -- None here
+    # means it never will for this call, the one place a duplicate could
+    # otherwise be created.
+    result, _mocks = _run(existing_payment=_PAID_PAYMENT)
+    assert result["notification_order"] is None
 
 
 def test_concurrent_call_that_loses_the_conditional_update_race_rereads_consistently():
@@ -139,8 +144,6 @@ def test_concurrent_call_that_loses_the_conditional_update_race_rereads_consiste
         patch.object(payment_service, "get_or_create_payment", return_value=_PENDING_PAYMENT),
         patch.object(payment_service, "get_payment_for_order", return_value=_PAID_PAYMENT) as mock_reread,
         patch.object(payment_service, "supabase") as mock_supabase,
-        patch.object(payment_service.order_service, "update_order_status") as mock_update_status,
-        patch.object(payment_service.notification_service, "create_notification_for_order_event") as mock_notify,
     ):
         mock_supabase.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value = (
             SimpleNamespace(data=[])  # lost the race -- zero rows matched
@@ -149,8 +152,7 @@ def test_concurrent_call_that_loses_the_conditional_update_race_rereads_consiste
 
     assert result["payment"] == _PAID_PAYMENT
     assert result["order_status"] == "confirmed"  # reflects the winner's already-applied update
-    mock_update_status.assert_not_called()  # this call never performed the transition itself
-    mock_notify.assert_not_called()  # nor drafted a second notification
+    assert result["notification_order"] is None  # this call never performed the transition itself
     mock_reread.assert_called_once_with("order-1")
 
 
@@ -175,6 +177,23 @@ def test_nonexistent_order_raises_order_not_found():
             pass
         else:
             raise AssertionError("expected OrderNotFoundError for a missing order")
+
+
+# --- _mark_order_confirmed: one write, no re-fetch --------------------------
+
+
+def test_mark_order_confirmed_issues_a_single_update_with_no_refetch():
+    # The collapsed replacement for order_service.update_order_status()
+    # (which always re-fetches the full joined row afterward, right for
+    # its own admin-route caller but wasteful here -- simulate_payment
+    # already holds the order it needs). Exactly one supabase.table()
+    # call proves no re-fetch happens.
+    with patch.object(payment_service, "supabase") as mock_supabase:
+        payment_service._mark_order_confirmed("order-1")
+
+    mock_supabase.table.assert_called_once_with("orders")
+    mock_supabase.table.return_value.update.assert_called_once_with({"status": "confirmed"})
+    mock_supabase.table.return_value.update.return_value.eq.assert_called_once_with("id", "order-1")
 
 
 # --- get_or_create_payment: exactly one payment row per order --------------

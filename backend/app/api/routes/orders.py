@@ -1,7 +1,7 @@
 import logging
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from app.schemas.order import (
     OrderCreateRequest,
@@ -89,11 +89,24 @@ def get_order_route(order_id: uuid.UUID):
 
 
 @router.post("/{order_id}/pay", response_model=OrderPaymentResponse)
-def pay_order_route(order_id: uuid.UUID):
+def pay_order_route(order_id: uuid.UUID, background_tasks: BackgroundTasks):
     """Simulated/demo payment -- see payment_service.simulate_payment's
-    own docstring for the full idempotency/authoritative-amount contract.
-    The ONE endpoint Website, Chat, and WhatsApp all call; no amount is
-    ever accepted here -- it's always orders.total_price.
+    own docstring for the full idempotency/authoritative-amount contract
+    and for exactly what the synchronous critical path is (order
+    payable, payment marked paid, order confirmed, idempotency -- that's
+    it). The ONE endpoint Website, Chat, and WhatsApp all call; no
+    amount is ever accepted here -- it's always orders.total_price.
+
+    Drafting the confirmed-order notification is NOT on the critical
+    path: nobody is waiting on it for a successful payment response (a
+    human still reviews/sends it later, exactly as before -- this only
+    changes when the draft gets created, not the human-in-the-loop send
+    step). Scheduled as a FastAPI BackgroundTask -- an existing
+    Starlette/FastAPI feature, not new infrastructure -- so it runs
+    after the response is already on its way to the customer.
+    payment_service only ever returns a non-None "notification_order"
+    on the one call that actually performs the transition, so a retry
+    or an idempotent already-paid call never schedules a duplicate.
     """
     order_id_str = str(order_id)
     try:
@@ -105,6 +118,11 @@ def pay_order_route(order_id: uuid.UUID):
     except Exception:
         logger.exception("Failed to process payment for order=%s", order_id_str)
         raise HTTPException(status_code=500, detail="Failed to process payment")
+
+    if result["notification_order"] is not None:
+        background_tasks.add_task(
+            notification_service.create_notification_for_order_event, result["notification_order"], "confirmed"
+        )
 
     payment = result["payment"]
     return {

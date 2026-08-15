@@ -14,6 +14,8 @@ runs for real.
 import uuid
 from unittest.mock import patch
 
+from fastapi import BackgroundTasks
+
 from app.api.routes import orders
 from app.schemas.order import OrderCreateRequest
 from app.services import payment_service
@@ -184,9 +186,10 @@ def test_pay_order_route_returns_payment_and_order_status():
         return_value={
             "payment": {"status": "paid", "amount": 152.0, "simulated_reference": "SIM-ABC123", "paid_at": "2026-08-12T10:00:00+00:00"},
             "order_status": "confirmed",
+            "notification_order": None,
         },
     ) as mock_simulate:
-        result = orders.pay_order_route(_UUID)
+        result = orders.pay_order_route(_UUID, BackgroundTasks())
 
     mock_simulate.assert_called_once_with(str(_UUID))
     assert result == {
@@ -198,10 +201,54 @@ def test_pay_order_route_returns_payment_and_order_status():
     }
 
 
+def test_pay_order_route_schedules_the_notification_draft_as_a_background_task():
+    # Not on the critical path -- the customer-facing response must not
+    # wait on drafting the confirmed-order notification (see payment_
+    # service.simulate_payment's own docstring). Scheduled only when
+    # simulate_payment signals a real transition just happened.
+    notification_order = {"id": "order-1", "status": "confirmed"}
+    background_tasks = BackgroundTasks()
+    with (
+        patch.object(
+            orders.payment_service,
+            "simulate_payment",
+            return_value={
+                "payment": {"status": "paid", "amount": 152.0, "simulated_reference": "SIM-ABC123", "paid_at": "t"},
+                "order_status": "confirmed",
+                "notification_order": notification_order,
+            },
+        ),
+        patch.object(orders.notification_service, "create_notification_for_order_event") as mock_notify,
+    ):
+        orders.pay_order_route(_UUID, background_tasks)
+
+    mock_notify.assert_not_called()  # not yet -- only scheduled, not run inline
+    assert len(background_tasks.tasks) == 1
+    task = background_tasks.tasks[0]
+    assert task.func is mock_notify
+    assert task.args == (notification_order, "confirmed")
+
+
+def test_pay_order_route_schedules_no_background_task_for_an_idempotent_repeat():
+    background_tasks = BackgroundTasks()
+    with patch.object(
+        orders.payment_service,
+        "simulate_payment",
+        return_value={
+            "payment": {"status": "paid", "amount": 152.0, "simulated_reference": "SIM-ABC123", "paid_at": "t"},
+            "order_status": "confirmed",
+            "notification_order": None,  # already paid before this call -- no new transition
+        },
+    ):
+        orders.pay_order_route(_UUID, background_tasks)
+
+    assert len(background_tasks.tasks) == 0
+
+
 def test_pay_order_route_returns_404_for_a_nonexistent_order():
     with patch.object(orders.payment_service, "simulate_payment", side_effect=payment_service.OrderNotFoundError(str(_UUID))):
         try:
-            orders.pay_order_route(_UUID)
+            orders.pay_order_route(_UUID, BackgroundTasks())
         except Exception as exc:
             assert getattr(exc, "status_code", None) == 404
         else:
@@ -213,7 +260,7 @@ def test_pay_order_route_returns_400_for_a_cancelled_order():
         orders.payment_service, "simulate_payment", side_effect=payment_service.OrderNotPayableError("cancelled")
     ):
         try:
-            orders.pay_order_route(_UUID)
+            orders.pay_order_route(_UUID, BackgroundTasks())
         except Exception as exc:
             assert getattr(exc, "status_code", None) == 400
         else:

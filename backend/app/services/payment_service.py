@@ -19,7 +19,7 @@ import secrets
 from datetime import datetime, timezone
 
 from app.core.database import supabase
-from app.services import audit_service, notification_service, order_service
+from app.services import audit_service, order_service
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,21 @@ def get_or_create_payment(order_id: str, amount: float) -> dict:
     return created.data[0]
 
 
+def _mark_order_confirmed(order_id: str) -> None:
+    """The one automatic status transition in this project (pending ->
+    confirmed, on successful payment) -- a payment-specific, minimal
+    write, deliberately NOT order_service.update_order_status(). That
+    function always re-fetches the full joined row afterward, which is
+    the right contract for its own caller (the admin status-update
+    route, which holds no other copy of the order) but wasteful here:
+    simulate_payment already holds the order it fetched at the top of
+    this call, and `status` is the only field this transition changes,
+    so no re-fetch is needed -- the caller builds the updated view
+    locally instead (see its own note).
+    """
+    supabase.table("orders").update({"status": "confirmed"}).eq("id", order_id).execute()
+
+
 def simulate_payment(order_id: str) -> dict:
     """The ONE simulated-payment entry point every channel calls (see
     this module's own docstring).
@@ -89,7 +104,22 @@ def simulate_payment(order_id: str) -> dict:
     to a clean 404/400 -- same "service validates, route maps to HTTP"
     shape order_service.update_order_status already established.
 
-    Returns {"payment": dict, "order_status": str}.
+    The synchronous critical path is exactly: order exists and is
+    payable, payment is marked paid, order moves pending -> confirmed,
+    idempotency guaranteed -- nothing else gates the HTTP response.
+    Audit logging stays synchronous (a real, if small, integrity record
+    of an automatic state change -- see audit_service's own docstring on
+    why a missed log line is worse than a few extra ms here). Drafting
+    the confirmed-order notification does NOT: it's a customer-facing
+    artifact nobody is waiting on for payment success (a human still has
+    to review/send it later, exactly as before), so the route schedules
+    it as a FastAPI BackgroundTask instead of blocking the response on
+    its three DB calls. Returns {"payment": dict, "order_status": str,
+    "notification_order": dict | None} -- "notification_order" is only
+    ever set on the one call that actually performs the transition
+    (never on an idempotent already-paid short-circuit or a lost race),
+    so the route knows exactly when (and with what data) to schedule it,
+    never scheduling a duplicate.
     """
     order = order_service.get_order_by_id(order_id)
     if order is None:
@@ -100,7 +130,7 @@ def simulate_payment(order_id: str) -> dict:
     payment = get_or_create_payment(order_id, order["total_price"])
 
     if payment["status"] == "paid":
-        return {"payment": payment, "order_status": order["status"]}
+        return {"payment": payment, "order_status": order["status"], "notification_order": None}
 
     updated = (
         supabase.table("payments")
@@ -119,19 +149,28 @@ def simulate_payment(order_id: str) -> dict:
         # someone else's request already flipped this row to "paid" between
         # our read and write. Re-read rather than treat this as a failure:
         # the outcome (paid, exactly once) is exactly what both callers wanted.
+        # A real re-fetch here (unlike the transition path below) -- this is
+        # the rare race case, and we genuinely don't know the winner's final
+        # state from our own stale local copy.
         payment = get_payment_for_order(order_id)
-        return {"payment": payment, "order_status": order_service.get_order_by_id(order_id)["status"]}
+        order_status = order_service.get_order_by_id(order_id)["status"]
+        return {"payment": payment, "order_status": order_status, "notification_order": None}
 
     payment = updated.data[0]
     order_status = order["status"]
+    notification_order = None
 
     # The one automatic status transition in this project: pending ->
     # confirmed, on successful payment, no staff approval. Never touches
     # any later production stage (in_progress/ready/completed) -- those
     # stay staff-driven via the existing admin status-update route.
     if order_status == "pending":
-        updated_order = order_service.update_order_status(order_id, "confirmed")
-        order_status = updated_order["status"]
+        _mark_order_confirmed(order_id)
+        order_status = "confirmed"
+        # Built locally, not re-fetched: nothing about this order except
+        # `status` changed, and we already have the rest (customers/
+        # cake_templates joined) from the fetch at the top of this call.
+        notification_order = {**order, "status": "confirmed"}
         audit_service.record_event(
             actor_id=None,  # system-initiated -- no staff member acted (see record_event's own docstring)
             action="order.payment_confirmed",
@@ -140,13 +179,5 @@ def simulate_payment(order_id: str) -> dict:
             before={"status": "pending"},
             after={"status": "confirmed"},
         )
-        try:
-            # Reuses the exact same notification path the admin status-
-            # update route already goes through -- no second notification
-            # system, no new template, human-in-the-loop for the actual
-            # send is unchanged (still a `draft` a staff member submits).
-            notification_service.create_notification_for_order_event(updated_order, "confirmed")
-        except Exception:
-            logger.exception("Failed to draft confirmed-order notification for order=%s", order_id)
 
-    return {"payment": payment, "order_status": order_status}
+    return {"payment": payment, "order_status": order_status, "notification_order": notification_order}
