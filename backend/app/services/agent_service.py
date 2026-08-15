@@ -101,12 +101,22 @@ def _claude(prompt: str, max_tokens: int = 700) -> str:
     # or transiently-erroring call could legitimately hang for minutes
     # before this project's own try/except around every _claude() call
     # site ever got a chance to fall back to a safe message. Real
-    # production /chat/order calls were observed taking 55-80s. 20s is
-    # generous for a JSON-only reply with thinking disabled; one retry
-    # (not the default two) keeps the worst case bounded to roughly
-    # 40-45s instead of open-ended, while still recovering from a single
-    # transient network hiccup.
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=20.0, max_retries=1)
+    # production /chat/order calls were observed taking 55-80s.
+    #
+    # An earlier fix set this to timeout=20.0 (bounding the worst case to
+    # ~40-45s with one retry) -- but a real request also makes ~5-6 other
+    # sequential Supabase calls around this one, and the frontend's own
+    # timeout is 45s, so that left ~zero margin: a single slow Claude
+    # attempt could push the WHOLE request past the frontend's ceiling,
+    # turning "sometimes slow" into "sometimes a hard failure" (caught
+    # live: a real customer's first message timed out this way). Live-
+    # measured normal-case latency is 1.6-4.6s -- 12s per attempt is
+    # still generous headroom (2.5-7x normal) while bounding the worst
+    # case to ~25-27s with one retry, leaving real margin for the rest
+    # of the request. The genuinely obvious-order-intent case that
+    # prompted this bug (see _looks_like_obvious_new_order above) now
+    # skips this call entirely rather than depending on it being fast.
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=12.0, max_retries=1)
     # Extended thinking is on by default for claude-sonnet-5 and counts
     # against max_tokens — for straightforward "synthesize this
     # structured data into a paragraph" tasks it added latency/cost with
@@ -592,12 +602,80 @@ _CUSTOMER_SITE_BASE = "https://cakecraft-studio-production.up.railway.app"
 _CATALOG_CATEGORIES = ("Birthday", "Wedding", "Corporate", "Graduation", "Baby Shower")
 
 
-def _website_collection_link(text: str) -> str:
+def _detect_category(text: str) -> str | None:
     lowered = text.lower()
     for category in _CATALOG_CATEGORIES:
         if category.lower() in lowered:
-            return f"{_CUSTOMER_SITE_BASE}/templates.html?collection={quote(category)}"
+            return category
+    return None
+
+
+def _website_collection_link(text: str) -> str:
+    category = _detect_category(text)
+    if category:
+        return f"{_CUSTOMER_SITE_BASE}/templates.html?collection={quote(category)}"
     return f"{_CUSTOMER_SITE_BASE}/index.html#collections"
+
+
+# Deterministic fast path for an OBVIOUS new-order message -- skips RAG
+# and Claude entirely. Measured live (real RAG + real Claude, see the
+# commit message): a message like "I would like to order a birthday cake
+# for 20 nice people" took ~5.3s through the full path even in the
+# NORMAL case (0.7s RAG + 4.6s Claude), and up to the full retry budget
+# whenever Claude had any transient slowness -- with ~5-6 other
+# sequential Supabase calls in the same request, that left no margin
+# before the frontend's own timeout. This intent already gets a fully
+# templated reply today (see instruction #2 in the prompt below) --
+# Claude was only ever filling in the same real catalog/guest-count
+# facts these functions already compute deterministically. Conservative
+# by design: a false negative just falls through to the unchanged,
+# still-correct Claude path; only a real ordering phrase AND the word
+# "cake" qualifies, so this never intercepts an existing-order,
+# order-change, or ambiguous question.
+_NEW_ORDER_INTENT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:i'?d|i would|i)\s+(?:like|want|wanna)\s+to\s+order\b",
+        r"\bcan\s+i\s+order\b",
+        r"\border\s+a\s+cake\b",
+        r"\bplace\s+an?\s+order\b",
+        r"\bi\s+want\s+(?:a|an)\s+.*\bcake\b",
+    )
+)
+
+
+def _looks_like_obvious_new_order(message: str) -> bool:
+    lowered = message.lower()
+    if "cake" not in lowered:
+        return False
+    return any(pattern.search(message) for pattern in _NEW_ORDER_INTENT_PATTERNS)
+
+
+def _fast_path_new_order_reply(message: str) -> str:
+    """Entirely deterministic -- no Claude, no RAG. Same shape as the
+    Claude-driven NEW_ORDER_INQUIRY reply (acknowledge + real website
+    link + "continue here too"), built directly from real catalog/
+    guest-count data via the exact same helpers the order-assistant and
+    Website-First prompt already use.
+    """
+    category = _detect_category(message)
+    greeting = f"We'd love to help with your {category} cake! 🎂" if category else "We'd love to help with that! 🎂"
+    lines = [greeting]
+
+    guest_count = _extract_guest_count(message)
+    if guest_count is not None:
+        options = _cached("options", designer_service.get_designer_options)
+        size_id = _size_for_guest_count(guest_count, options["cake_sizes"])
+        size = next((s for s in options["cake_sizes"] if s["id"] == size_id), None) if size_id else None
+        if size:
+            lines.append(
+                f"For {guest_count} guests, our {size['name']} size "
+                f"(serves {size['servings_min']}-{size['servings_max']}) would be just right."
+            )
+
+    lines.append(f"You can browse real designs here: {_website_collection_link(message)}")
+    lines.append("Or continue right here and we'll help you build the order.")
+    return "\n\n".join(lines)
 
 
 def _classify_and_respond(
@@ -655,6 +733,20 @@ def _classify_and_respond(
     "review_reason": str | None, "subject": str | None, "body": str | None,
     "knowledge_sources": list[dict]}.
     """
+    if _looks_like_obvious_new_order(message_body):
+        return {
+            "ai_status": "drafted",
+            "intent": "NEW_ORDER_INQUIRY",
+            "handling": _compute_handling(
+                "NEW_ORDER_INQUIRY", claude_requests_review=False,
+                order_ambiguous=order_match_status == "ambiguous", can_answer=True,
+            ),
+            "review_reason": None,
+            "subject": "Re: your CakeCraft order",
+            "body": _fast_path_new_order_reply(message_body),
+            "knowledge_sources": [],
+        }
+
     knowledge = rag_service.retrieve(message_body, top_k=4)
     if not knowledge and conversation_history:
         # A short, genuinely vague follow-up ("What do I do next?") can

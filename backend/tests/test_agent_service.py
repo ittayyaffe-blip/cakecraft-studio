@@ -1810,7 +1810,11 @@ def test_new_order_inquiry_prompt_includes_the_real_website_link_not_an_invented
         mock_anthropic_cls.return_value.messages.create.return_value = fake_response
         mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(channel="chat", status="sent")
 
-        agent_service.answer_customer_question("I'd like to order a birthday cake", _FAKE_INBOUND_CUSTOMER, None)
+        # Deliberately doesn't match _looks_like_obvious_new_order's fast
+        # path (no "order"/"cake" phrasing) -- this test is specifically
+        # about the Claude-driven prompt instruction, for the messages
+        # ambiguous enough that they still need Claude to classify.
+        agent_service.answer_customer_question("What do you have for a birthday party?", _FAKE_INBOUND_CUSTOMER, None)
 
     sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
     assert "templates.html?collection=Birthday" in sent_prompt
@@ -1834,13 +1838,70 @@ def test_website_first_prompt_also_used_for_inbound_whatsapp_email_replies():
         mock_anthropic_cls.return_value.messages.create.return_value = fake_response
         mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
 
+        # Deliberately doesn't match _looks_like_obvious_new_order's fast
+        # path -- see the other Website First test's own note.
         agent_service.draft_reply_to_inbound_message(
-            _fake_inbound_message(channel="whatsapp", body="I want to order a wedding cake"),
+            _fake_inbound_message(channel="whatsapp", body="What do you have for a wedding?"),
             _FAKE_INBOUND_CUSTOMER, None,
         )
 
     sent_prompt = mock_anthropic_cls.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
     assert "templates.html?collection=Wedding" in sent_prompt
+
+
+# --- Deterministic fast path for an obvious new-order message --------------
+# A real production message ("I would like to order a birthday cake for 20
+# nice people") was measured taking ~5.3s through the full RAG+Claude path
+# even normally, and risked the frontend's own timeout whenever Claude had
+# any transient slowness (see the commit message). This intent's reply was
+# already fully templated -- Claude was only ever restating real catalog/
+# guest-count facts these functions already compute deterministically.
+
+
+def test_obvious_new_order_message_skips_rag_and_claude_entirely():
+    with (
+        patch.object(agent_service.rag_service, "retrieve") as mock_retrieve,
+        patch.object(agent_service, "_claude") as mock_claude,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result(
+            channel="chat", status="sent"
+        )
+        result = agent_service.answer_customer_question(
+            "I would like to order a birthday cake for 20 nice people", _FAKE_INBOUND_CUSTOMER, None
+        )
+
+    mock_retrieve.assert_not_called()
+    mock_claude.assert_not_called()
+    assert result["intent"] == "NEW_ORDER_INQUIRY"
+    assert "templates.html?collection=Birthday" in result["answer"]
+    assert "Large" in result["answer"]  # 20 guests -> Large, deterministic, not Claude-stated
+
+
+def test_fast_path_reply_never_hardcodes_the_occasion_or_size():
+    # Same mechanism, different occasion/count -- proves this is a real
+    # reusable deterministic builder, not a birthday-specific string.
+    reply = agent_service._fast_path_new_order_reply("I want to order a wedding cake for 15 people")
+    assert "Wedding" in reply
+    assert "Medium" in reply  # 15 guests -> Medium
+    assert "templates.html?collection=Wedding" in reply
+
+
+def test_fast_path_omits_the_size_line_when_no_guest_count_is_mentioned():
+    reply = agent_service._fast_path_new_order_reply("I would like to order a cake")
+    assert "serves" not in reply.lower()  # nothing to compute a size from -- never guessed
+
+
+def test_ambiguous_messages_still_go_through_claude_not_the_fast_path():
+    # An existing-order or vague question must never be intercepted --
+    # only a clear "start a new order" phrase plus "cake" qualifies.
+    for message in (
+        "Can you check on my order?",
+        "I already ordered a cake, when will it be ready?",
+        "Do you have vegan cakes?",
+        "How much does a wedding cake cost?",
+    ):
+        assert not agent_service._looks_like_obvious_new_order(message), message
 
 
 # --- Payment grounding (simulated/demo payment + automatic confirmation) ---
