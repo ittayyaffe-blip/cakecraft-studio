@@ -35,7 +35,17 @@ const CHAT_GENERIC_INTRO = "Have a question? Ask us about ingredients, allergies
 // it's available; nothing else in this file needs to change. Digits
 // only, no "+"/spaces (wa.me's required format).
 const WHATSAPP_NUMBER = "972545446601";
-const WHATSAPP_PREFILL_MESSAGE = "Hi CakeCraft Studio! I'd like to ask a question about a cake.";
+// The ONE authoritative prefill text -- every customer-facing WhatsApp
+// entry point (landing page card, footer link, hero CTA) calls
+// buildWhatsAppLink() below rather than constructing its own wa.me URL,
+// so there is exactly one place this string is ever set (confirmed: no
+// other caller in this project builds a wa.me link independently). A
+// previously reported "duplicated message" was the text appearing twice
+// in WhatsApp's own compose box -- that's wa.me prefill appending to an
+// already-unsent draft left in the chat from an earlier click, on
+// WhatsApp's side, not something a URL/text change here can control; a
+// single fixed source (already true) is the correct fix on this end.
+const WHATSAPP_PREFILL_MESSAGE = "Hi CakeCraft Studio! I'd like some help with a cake.";
 
 function buildWhatsAppLink() {
   return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(WHATSAPP_PREFILL_MESSAGE)}`;

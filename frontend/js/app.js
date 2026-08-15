@@ -56,9 +56,21 @@ async function loadCollections() {
 // footer link -- so this silently no-ops wherever an element isn't
 // present, same guard style loadCollections above already uses.
 function initWhatsAppLinks() {
+  // Both open the existing chat widget (window.CakeCraftChat.open(), see
+  // chat-widget.js) -- the contact card's "Start Chat" button and the
+  // hero's own secondary CTA (Final Landing Page Polish). Two separate
+  // id-based blocks, not a shared selector, so the already-approved
+  // contact card above needs no attribute changes of its own.
   const chatCard = document.getElementById("talkToUsChatBtn");
   if (chatCard) {
     chatCard.addEventListener("click", () => {
+      if (window.CakeCraftChat) window.CakeCraftChat.open();
+    });
+  }
+
+  const heroChatBtn = document.getElementById("heroChatBtn");
+  if (heroChatBtn) {
+    heroChatBtn.addEventListener("click", () => {
       if (window.CakeCraftChat) window.CakeCraftChat.open();
     });
   }

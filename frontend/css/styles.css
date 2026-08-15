@@ -427,6 +427,27 @@ h3 {
   max-width: 40rem;
 }
 
+/* Left third, slightly up, not centered (Final Landing Page Polish).
+   .hero__content also carries .container, whose own margin-inline:auto
+   centers it as a flex item inside .hero regardless of .hero's flex-start
+   default (auto margins win over justify-content) -- that's why it read
+   as dead-center before. The left inset matches where every other
+   .container on the page naturally sits (same formula .container's own
+   max-width/auto-margin combination produces), so the text lines up with
+   the header logo and section headings rather than floating at an
+   arbitrary offset, while landing solidly in the hero's left third with
+   real whitespace before the cake. Scoped to the same 860px breakpoint
+   .hero__scrim above already uses for its own "text on the left, cake on
+   the right" tint -- below that, text already spans nearly the full
+   width (see .hero__scrim's mobile note), so this would have no visible
+   effect there; left untouched for a smaller diff. */
+@media (min-width: 860px) {
+  .hero__content {
+    margin-inline: max(var(--space-3), calc((100vw - var(--container-width)) / 2)) auto;
+    margin-top: -3rem;
+  }
+}
+
 .hero__title {
   font-size: clamp(2.5rem, 1.85rem + 3vw, 4.25rem);
   line-height: 1.12;
@@ -465,8 +486,21 @@ h3 {
   color: var(--color-ivory-dark);
 }
 
-.hero .btn-primary {
+/* Start Designing (primary) + Chat with us (secondary, plain .btn-small --
+   already the app's existing outline/lighter button variant, transparent
+   with a gold border, reused as-is rather than inventing a new "secondary
+   CTA" style) stack with one small, consistent gap -- .hero__cta owns the
+   spacing above/between them so the buttons themselves don't need their
+   own margin-top. */
+.hero__cta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
   margin-top: var(--space-4);
+}
+
+.hero .btn-primary {
   padding: 1.1rem 2.75rem;
   font-size: 1.05rem;
   letter-spacing: 0.02em;
@@ -477,6 +511,11 @@ h3 {
 .hero .btn-primary:focus-visible {
   box-shadow: 0 20px 40px -14px rgba(198, 161, 91, 0.7);
 }
+
+/* .btn-small has no explicit color of its own -- inside .hero it inherits
+   the hero's own ivory text color (see .hero { color: var(--color-ivory) }
+   above), pairing with its existing gold border/transparent background for
+   a premium outline look with zero new color rules. */
 
 /* ---------- Collections ---------- */
 .collections {
@@ -2696,6 +2735,19 @@ h3 {
 
 .chat-widget__toggle:hover {
   background: var(--color-gold-light);
+}
+
+/* Landing page only, desktop only: the floating toggle is redundant with
+   the hero's own "Chat with us" secondary CTA (and the "Questions Before
+   You Order?" Chat card further down) -- easy to miss in the corner, per
+   the Final Landing Page Polish task. #page-home is only ever set on
+   index.html's <body>, so every other page's floating toggle (they have
+   no equivalent hero CTA) is completely unaffected. Kept on small/mobile
+   screens, where there's no hero CTA row visible without scrolling. */
+@media (min-width: 860px) {
+  #page-home .chat-widget__toggle {
+    display: none;
+  }
 }
 
 .chat-widget__panel {
