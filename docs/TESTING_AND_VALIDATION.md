@@ -6,7 +6,7 @@
 
 This project's validation deliberately separates two things that are easy to conflate: automated tests that run without any external dependency, and manual/live checks against the real deployed application and real external services. Both matter; neither substitutes for the other. Automated tests prove the logic is correct in isolation and stays correct as the code changes; manual/live validation proves the real integrations (Twilio, Gmail/Resend, Supabase, Claude, Railway) actually work together in production, which no amount of mocking can prove on its own.
 
-## 2. Automated Validation — 470/470 Passing
+## 2. Automated Validation — 475/475 Passing
 
 Run via `pytest` from `backend/` (`python -m pytest`). Every test module is dependency-free — no live network/DB/Twilio/Anthropic call — mocking each external boundary at its exact call site while running the real business logic around it.
 
@@ -35,7 +35,9 @@ Run via `pytest` from `backend/` (`python -m pytest`). Every test module is depe
 | `test_briefing_service` | 7 | Operational briefing synthesis |
 | `test_admin_communications_route` | 7 | Admin WhatsApp thread/reply routes |
 | `test_admin_notifications_route` | 4 | Notification list `?channel=` filter validation |
-| **Total** | **470** | |
+| `test_admin_authorization_route` | 3 | Final Security Hardening Pass — real-HTTP integration coverage of the FULL FastAPI dependency chain for the one role-gated action (`POST /admin/notifications/{id}/approve`): a non-admin staff identity is rejected with 403, a missing token with 401, an admin identity is permitted through to a real 200 |
+| `test_security_headers` | 2 | Final Security Hardening Pass — every response (including error responses) carries the security response headers added in `app.main`'s middleware |
+| **Total** | **475** | |
 
 ## 3. Manual / Live End-to-End Validation
 
@@ -48,6 +50,7 @@ Not automated (by design — these exercise real external services, real credent
 - **WhatsApp — outbound**: real HTTP calls to Twilio's Messages API, verified directly against Twilio's own Message-status API (correct recipient, correct Sandbox "From" number, correct credentials).
 - **WhatsApp — inbound**: a real customer WhatsApp message reaching Twilio was independently confirmed via Twilio's own message log (`status: received`, real Message SID, real body, real timestamp). **CakeCraft's own inbound routing (Twilio → our webhook → `inbound_messages` → Communications Inbox) has NOT been demonstrated end-to-end** — Twilio is not currently configured to call our webhook at all (an external Sandbox Console setting, not a code defect; see `docs/COMMUNICATIONS_AND_HUMAN_APPROVAL.md` §5). Do not read this document, or any other, as claiming that path passed.
 - Both Railway services (`web`, `cakecraft-studio`) confirmed `RUNNING` and reachable; Supabase connectivity confirmed via live, read-only queries.
+- **Security headers (Final Security Hardening Pass)**: verified locally against real running instances of both services before deploying (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Content-Security-Policy`, `Strict-Transport-Security` all present on real responses from each), then re-confirmed against the live production URLs after deployment. `pip-audit`: 0 known vulnerabilities (after upgrading `cryptography`/`h2` — see `docs/DEPENDENCIES_AND_LICENSES.md`). `npm audit` (frontend's `serve` dependency): 0 vulnerabilities.
 
 ## 4. Known Non-Blocking Limitations
 
@@ -59,6 +62,7 @@ Presented honestly, as limitations and future-improvement candidates — not as 
 - **Failed-send error messages are not persisted** on the notification record itself — a `failed` status is visible to staff, but the specific delivery error is only in server logs, not the UI. Identified as an optional future improvement.
 - **RAG retrieval is not perfect.** A real, observed case is documented in `docs/AI_RAG_AND_SAFETY.md`: a birthday-cake recommendation question did not retrieve the most relevant knowledge document. The system's safety behavior in that case was correct (it escalated rather than guessed), but this is disclosed as a genuine retrieval-quality limitation of the TF-IDF approach, not claimed away.
 - **Two Customer-detail panels (Communications history, AI Insights) are still explicit placeholders** — see `docs/FINAL_ARCHITECTURE.md` §21. They degrade gracefully (a styled "not enabled yet" state, not an error); identified as a small, backend-ready remaining item, not a defect.
+- **No application-level rate limiting** (Final Security Hardening Pass, evaluated but deliberately not implemented). This app's own code already documents, at the one place that needed to reconstruct the real request URL for Twilio signature verification, that `request.client.host` is not the real client IP behind Railway's proxy by default, and that trusting `X-Forwarded-*` globally was a deliberate choice avoided at the time (see `twilio_whatsapp_inbound.external_url`'s own docstring). Without independently confirmed, correct client-IP extraction, an IP-keyed rate limiter risks sharing one bucket across all customers (globally throttling the live demo) rather than limiting individual abuse — a worse outcome than no limiter at all. Documented here as future production hardening rather than implemented on uncertain footing.
 
 ## 5. What Was Deliberately Not Re-Tested
 

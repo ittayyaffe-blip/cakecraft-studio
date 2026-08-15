@@ -12,11 +12,11 @@ cffi==2.1.0
 charset-normalizer==3.5.0
 click==8.4.2
 colorama==0.4.6
-cryptography==49.0.0
+cryptography==50.0.0
 deprecation==2.1.0
 fastapi==0.141.0
 h11==0.16.0
-h2==4.4.0
+h2==4.4.1
 hpack==4.2.0
 httpcore==1.0.9
 httpx==0.28.1
