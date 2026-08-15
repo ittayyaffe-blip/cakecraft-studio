@@ -49,6 +49,15 @@ class AdminOrderSummary(BaseModel):
     pickup_time: time | None = None
     customers: AdminOrderCustomer | None = None
     cake_templates: AdminOrderTemplate | None = None
+    # Deterministic, read-only decision-support signal computed by
+    # app/services/priority_service.py and attached by the admin orders
+    # route (never by order_service.py itself, which many non-admin
+    # callers also use) -- see that module's own docstring for the exact
+    # policy. Defaults let any order dict that doesn't set these
+    # (anything not routed through that attachment step) validate fine.
+    priority: str | None = None
+    priority_reason: str | None = None
+    manager_attention: bool = False
 
 
 class AdminOrderDetail(AdminOrderSummary):

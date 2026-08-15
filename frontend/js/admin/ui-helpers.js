@@ -21,6 +21,47 @@ function renderStatusBadge(status) {
   return span;
 }
 
+// Order priority (Pickup Date + Order Priority Phase 1) — the backend
+// (app/services/priority_service.py, wired in by app/api/routes/admin/
+// orders.py) is the ONLY place priority is calculated; this only chooses
+// a label/badge class for the value it's already given. `order.priority`
+// is null in two different cases the backend already distinguishes via
+// `manager_attention` — a missing pickup date (shown as "Needs Info") vs.
+// an order outside this policy's scope entirely, e.g. pending/completed/
+// cancelled (shown as a plain dash, nothing to flag).
+const PRIORITY_BADGE_LABELS = {
+  CRITICAL: "Critical",
+  HIGH: "High",
+  NORMAL: "Normal",
+  LOW: "Low",
+};
+
+function priorityBadgeKey(order) {
+  if (order.priority) return order.priority.toLowerCase();
+  if (order.manager_attention) return "needs_info";
+  return null;
+}
+
+function priorityBadgeLabel(order) {
+  if (order.priority) return PRIORITY_BADGE_LABELS[order.priority] || order.priority;
+  if (order.manager_attention) return "Needs Info";
+  return null;
+}
+
+function renderPriorityBadge(order) {
+  const key = priorityBadgeKey(order);
+  if (!key) {
+    const span = document.createElement("span");
+    span.textContent = "—";
+    return span;
+  }
+  const span = document.createElement("span");
+  span.className = `status-badge status-badge--priority-${key}`;
+  span.title = order.priority_reason || "";
+  span.textContent = priorityBadgeLabel(order);
+  return span;
+}
+
 // Mirrors backend/app/services/notification_templates.py's EVENT_LABELS —
 // duplicated here (not fetched) because it's presentation-only, static
 // data with no reason to round-trip the network for; if the backend adds

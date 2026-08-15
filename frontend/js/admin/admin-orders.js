@@ -52,7 +52,7 @@ function renderOrdersTable(orders) {
   table.className = "admin-table";
 
   const thead = document.createElement("thead");
-  thead.innerHTML = "<tr><th>Customer</th><th>Cake</th><th>Status</th><th>Total</th><th>Placed</th></tr>";
+  thead.innerHTML = "<tr><th>Customer</th><th>Cake</th><th>Status</th><th>Priority</th><th>Total</th><th>Placed</th></tr>";
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
@@ -70,13 +70,16 @@ function renderOrdersTable(orders) {
     const statusCell = document.createElement("td");
     statusCell.appendChild(renderStatusBadge(order.status));
 
+    const priorityCell = document.createElement("td");
+    priorityCell.appendChild(renderPriorityBadge(order));
+
     const totalCell = document.createElement("td");
     totalCell.textContent = formatCurrency(order.total_price);
 
     const placedCell = document.createElement("td");
     placedCell.textContent = formatDateTime(order.created_at);
 
-    tr.append(customerCell, cakeCell, statusCell, totalCell, placedCell);
+    tr.append(customerCell, cakeCell, statusCell, priorityCell, totalCell, placedCell);
 
     const open = () => openOrderDrawer(order.id);
     tr.addEventListener("click", open);
@@ -201,6 +204,10 @@ function renderOrderDetail(order, { justUpdatedNotificationId = null } = {}) {
     appendDetailRow(body, "Simulated Reference", order.payment.simulated_reference || "—");
   }
   appendDetailRow(body, "Placed", formatDateTime(order.created_at));
+  appendDetailRow(body, "Priority", priorityBadgeLabel(order) || "—");
+  if (order.priority_reason) {
+    appendDetailRow(body, "Priority Reason", order.priority_reason);
+  }
   appendDetailRow(body, "Pickup Date", order.pickup_date || "Not scheduled yet");
   appendDetailRow(body, "Pickup Time", order.pickup_time || "Not scheduled yet");
   appendDetailRow(body, "Notes", order.notes || "—");

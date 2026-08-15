@@ -27,13 +27,31 @@ from app.schemas.admin_order import (
     OrderStatusUpdateRequest,
     OrderStatusUpdateResponse,
 )
-from app.services import notification_service, order_service, payment_service
+from app.services import notification_service, order_service, payment_service, priority_service
 from app.services.auth_service import AdminIdentity
 from app.services.audit_service import record_event
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/orders", tags=["admin-orders"])
+
+
+def _with_priority(order: dict) -> dict:
+    """Attaches the read-only priority/priority_reason/manager_attention
+    fields (see priority_service's own docstring) to one order dict --
+    the one place this happens, so every response this router returns
+    carries it consistently. Deliberately not done inside order_service.py
+    itself, which agent_service/bakery_manager_service/the customer-facing
+    /orders route also call -- this is an admin-Orders-display concern
+    only, not a change to what order_service returns everywhere else.
+    """
+    computed = priority_service.compute_priority(order)
+    return {
+        **order,
+        "priority": computed["priority"],
+        "priority_reason": computed["reason"],
+        "manager_attention": computed["manager_attention"],
+    }
 
 
 @router.get("", response_model=AdminOrderListResponse)
@@ -48,10 +66,13 @@ def list_orders(
         raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
 
     try:
-        return order_service.list_orders(search=search, status=status, page=page, page_size=pageSize)
+        result = order_service.list_orders(search=search, status=status, page=page, page_size=pageSize)
     except Exception:
         logger.exception("Failed to list orders")
         raise HTTPException(status_code=500, detail="Failed to list orders")
+
+    result["items"] = [_with_priority(item) for item in result["items"]]
+    return result
 
 
 @router.get("/{order_id}", response_model=AdminOrderDetail)
@@ -67,7 +88,7 @@ def get_order(order_id: uuid.UUID, admin: AdminIdentity = Depends(get_current_ad
         raise HTTPException(status_code=404, detail="Order not found")
 
     payment = payment_service.get_payment_for_order(order_id_str)
-    return {**order, "payment": payment}
+    return {**_with_priority(order), "payment": payment}
 
 
 @router.patch("/{order_id}/status", response_model=OrderStatusUpdateResponse)
@@ -114,4 +135,4 @@ def update_order_status(
     # notification stays None only if drafting itself genuinely failed.
     notification = notification_service.create_notification_for_order_event(updated, body.status)
 
-    return {**updated, "notificationId": notification["id"] if notification else None}
+    return {**_with_priority(updated), "notificationId": notification["id"] if notification else None}

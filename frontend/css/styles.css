@@ -2065,6 +2065,34 @@ h3 {
   color: #a13a3a;
 }
 
+/* Order priority (Pickup Date + Order Priority Phase 1) -- reuses the
+   same status-badge component and, where sensible, the same color
+   pairs already established above rather than a new palette. */
+.status-badge--priority-critical {
+  background: #f7e3e3;
+  color: #a13a3a;
+}
+
+.status-badge--priority-high {
+  background: #f3ebdc;
+  color: #7a5a2e;
+}
+
+.status-badge--priority-normal {
+  background: #e6f2ea;
+  color: #2c7a49;
+}
+
+.status-badge--priority-low {
+  background: #f0ede8;
+  color: var(--color-brown-soft);
+}
+
+.status-badge--priority-needs_info {
+  background: #eee3f7;
+  color: #6a3b96;
+}
+
 /* ---------- Loading / error / empty states ---------- */
 .admin-state {
   padding: var(--space-3);
