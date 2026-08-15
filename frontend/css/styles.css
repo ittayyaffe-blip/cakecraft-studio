@@ -2216,10 +2216,11 @@ h3 {
   padding: var(--space-3);
 }
 
-/* Communication + Order drawers only (#notificationDrawer,
-   admin-notifications.html; #orderDrawer, admin-orders.html) -- ID-scoped
-   so any future .admin-drawer user stays unaffected by default. Roomier
-   on desktop for the WhatsApp Conversation thread (see
+/* Communication + Order + AI Bakery Manager drawers only
+   (#notificationDrawer, admin-notifications.html; #orderDrawer,
+   admin-orders.html; #bakeryManagerDrawer, admin-dashboard.html) --
+   ID-scoped so any future .admin-drawer user stays unaffected by
+   default. Roomier on desktop for the WhatsApp Conversation thread (see
    .whatsapp-thread__messages below), the Preview section (see
    .notification-preview textarea below), and the Order Details drawer's
    own sections (see .admin-detail-row below); everything below 1024px
@@ -2227,7 +2228,8 @@ h3 {
    responsive floor every other drawer already has. */
 @media (min-width: 1024px) {
   #notificationDrawer,
-  #orderDrawer {
+  #orderDrawer,
+  #bakeryManagerDrawer {
     width: 60vw;
     max-width: 1300px;
   }
@@ -2673,6 +2675,62 @@ h3 {
   font-size: 0.85rem;
   color: var(--color-brown-soft);
   margin: 0 0 var(--space-2);
+}
+
+/* AI Bakery Manager plan (admin-dashboard.html) -- proposed-action rows
+   reuse .admin-detail-row's own ivory/border language plus a checkbox
+   for executable actions; a recommendation-only action gets the exact
+   same layout minus the checkbox (see admin-bakery-manager.js) rather
+   than a visually different treatment, so "these are the same kind of
+   thing, one just isn't executable" reads clearly. */
+.bakery-plan-action {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-ivory-dark);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-1);
+  background: var(--color-ivory);
+}
+
+.bakery-plan-action input[type="checkbox"] {
+  margin-top: 0.3rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  flex-shrink: 0;
+}
+
+.bakery-plan-action__body {
+  flex: 1;
+}
+
+.bakery-plan-action__title {
+  font-weight: 600;
+  color: var(--color-brown);
+  margin: 0 0 0.2rem;
+}
+
+.bakery-plan-action__reason {
+  margin: 0 0 0.2rem;
+  color: var(--color-brown-soft);
+  font-size: 0.9rem;
+}
+
+.bakery-plan-action__evidence {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.8rem;
+  color: var(--color-brown-soft);
+}
+
+.bakery-plan-action__badge {
+  display: inline-block;
+  margin-left: var(--space-1);
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 .notification-preview__subject {

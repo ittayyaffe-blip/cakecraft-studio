@@ -6,7 +6,7 @@
 
 This project's validation deliberately separates two things that are easy to conflate: automated tests that run without any external dependency, and manual/live checks against the real deployed application and real external services. Both matter; neither substitutes for the other. Automated tests prove the logic is correct in isolation and stays correct as the code changes; manual/live validation proves the real integrations (Twilio, Gmail/Resend, Supabase, Claude, Railway) actually work together in production, which no amount of mocking can prove on its own.
 
-## 2. Automated Validation — 475/475 Passing
+## 2. Automated Validation — 500/500 Passing
 
 Run via `pytest` from `backend/` (`python -m pytest`). Every test module is dependency-free — no live network/DB/Twilio/Anthropic call — mocking each external boundary at its exact call site while running the real business logic around it.
 
@@ -37,7 +37,9 @@ Run via `pytest` from `backend/` (`python -m pytest`). Every test module is depe
 | `test_admin_notifications_route` | 4 | Notification list `?channel=` filter validation |
 | `test_admin_authorization_route` | 3 | Final Security Hardening Pass — real-HTTP integration coverage of the FULL FastAPI dependency chain for the one role-gated action (`POST /admin/notifications/{id}/approve`): a non-admin staff identity is rejected with 403, a missing token with 401, an admin identity is permitted through to a real 200 |
 | `test_security_headers` | 2 | Final Security Hardening Pass — every response (including error responses) carries the security response headers added in `app.main`'s middleware |
-| **Total** | **475** | |
+| `test_bakery_manager_service` | 21 | AI Bakery Manager — Preview is read-only, an unknown/unrecognized Claude-proposed action type is forced unsafe, missing/too-far-out `pickup_date` correctly stays non-executable, `ready`/`completed` proposals are always recommendation-only, Claude's own opinion is never trusted (only ever downgraded), Execute re-validates every action fresh (stale state, invalid transition, unknown type all rejected), a duplicate Execute click stays safe, one failed action doesn't stop the batch, Execute makes zero Claude calls |
+| `test_admin_bakery_manager_route` | 4 | AI Bakery Manager routes — real-HTTP: any authenticated staff can Preview, unauthenticated cannot, staff cannot Execute (403), admin can |
+| **Total** | **500** | |
 
 ## 3. Manual / Live End-to-End Validation
 
@@ -49,6 +51,7 @@ Not automated (by design — these exercise real external services, real credent
 - **Email**: a real inbound email, detected by the real IMAP poller; a real customer identified from its sender address; real RAG retrieval and a real Claude-drafted reply; a real draft → Send → real Resend delivery, with the recipient personally confirming receipt (correct sender, subject, and body).
 - **WhatsApp — outbound**: real HTTP calls to Twilio's Messages API, verified directly against Twilio's own Message-status API (correct recipient, correct Sandbox "From" number, correct credentials).
 - **WhatsApp — inbound**: a real customer WhatsApp message reaching Twilio was independently confirmed via Twilio's own message log (`status: received`, real Message SID, real body, real timestamp). **CakeCraft's own inbound routing (Twilio → our webhook → `inbound_messages` → Communications Inbox) has NOT been demonstrated end-to-end** — Twilio is not currently configured to call our webhook at all (an external Sandbox Console setting, not a code defect; see `docs/COMMUNICATIONS_AND_HUMAN_APPROVAL.md` §5). Do not read this document, or any other, as claiming that path passed.
+- **AI Bakery Manager — Preview**: verified live in production after deployment (real staff auth, a real Claude planning call over real live data). **Execute has NOT been run against production data as part of automated verification** — deliberately deferred to a manual test, since it performs real, if allowlisted and reversible-in-intent, order/notification mutations.
 - Both Railway services (`web`, `cakecraft-studio`) confirmed `RUNNING` and reachable; Supabase connectivity confirmed via live, read-only queries.
 - **Security headers (Final Security Hardening Pass)**: verified locally against real running instances of both services before deploying (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Content-Security-Policy`, `Strict-Transport-Security` all present on real responses from each), then re-confirmed against the live production URLs after deployment. `pip-audit`: 0 known vulnerabilities (after upgrading `cryptography`/`h2` — see `docs/DEPENDENCIES_AND_LICENSES.md`). `npm audit` (frontend's `serve` dependency): 0 vulnerabilities.
 

@@ -85,6 +85,21 @@
           <div id="ragAskResult"></div>
         </section>
 
+        <!-- AI Bakery Manager -- optional, additive orchestration layer.
+             The manual workflow above (Orders, status changes, Communications)
+             remains the primary way to run the bakery; this is a separate,
+             clearly-labeled card, never required. -->
+        <section class="admin-briefing" aria-labelledby="bakeryManagerHeading">
+          <div class="admin-briefing__header">
+            <div>
+              <h2 id="bakeryManagerHeading">AI Bakery Manager</h2>
+              <p class="admin-briefing__generated">Run an AI-assisted bakery operations plan using live orders, ML forecasts and CakeCraft operating procedures. Optional — proposes a plan for your review; nothing changes until you explicitly execute it.</p>
+            </div>
+            <button class="btn btn-small" type="button" id="bakeryManagerPreviewBtn">Preview Plan</button>
+          </div>
+          <p class="admin-state is-hidden" id="bakeryManagerStatus"></p>
+        </section>
+
         <div class="admin-cards-grid">
           <article class="admin-card">
             <p class="admin-card__label">Total Orders</p>
@@ -140,11 +155,21 @@
     </div>
   </div>
 
+  <div class="admin-drawer-backdrop is-hidden" id="bakeryManagerDrawerBackdrop"></div>
+  <aside class="admin-drawer is-hidden" id="bakeryManagerDrawer" aria-hidden="true" aria-label="AI Bakery Manager plan">
+    <div class="admin-drawer__header">
+      <h2>AI Bakery Manager</h2>
+      <button type="button" class="admin-drawer__close" id="bakeryManagerDrawerClose" aria-label="Close AI Bakery Manager plan">&times;</button>
+    </div>
+    <div class="admin-drawer__body" id="bakeryManagerDrawerBody"></div>
+  </aside>
+
   <script src="js/api.js" defer></script>
   <script src="js/admin/auth.js" defer></script>
   <script src="js/admin/admin-api.js" defer></script>
   <script src="js/admin/ui-helpers.js" defer></script>
   <script src="js/admin/admin-layout.js" defer></script>
   <script src="js/admin/admin-dashboard.js" defer></script>
+  <script src="js/admin/admin-bakery-manager.js" defer></script>
 </body>
 </html>

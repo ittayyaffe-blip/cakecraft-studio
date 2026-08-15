@@ -236,3 +236,20 @@ async function createWhatsAppReply(customerId, body) {
     body: JSON.stringify({ customerId, body }),
   });
 }
+
+// --- AI Bakery Manager (optional, additive orchestration layer) ------------
+// Preview is read-only, open to any authenticated staff member (same
+// posture as the AI Daily Briefing/Ask Agent/RAG calls above). Execute is
+// admin-only server-side (require_role("admin")) -- a non-admin's call
+// here still reaches the backend and gets a real 403, this file doesn't
+// try to hide the button as its own security boundary.
+async function previewBakeryManagerPlan() {
+  return adminFetch("/admin/bakery-manager/preview", { method: "POST" });
+}
+
+async function executeBakeryManagerPlan(runId, actions) {
+  return adminFetch("/admin/bakery-manager/execute", {
+    method: "POST",
+    body: JSON.stringify({ runId, actions }),
+  });
+}

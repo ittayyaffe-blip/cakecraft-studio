@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import chat, collections, designer, health, orders, templates, webhooks, webhooks_twilio
 from app.api.routes.admin import agent as admin_agent
 from app.api.routes.admin import auth as admin_auth
+from app.api.routes.admin import bakery_manager as admin_bakery_manager
 from app.api.routes.admin import briefing as admin_briefing
 from app.api.routes.admin import catalog as admin_catalog
 from app.api.routes.admin import communications as admin_communications
@@ -126,6 +127,7 @@ app.include_router(admin_rag.router)
 app.include_router(admin_agent.router)
 app.include_router(admin_communications.router)
 app.include_router(admin_catalog.router)
+app.include_router(admin_bakery_manager.router)
 app.include_router(webhooks.router)
 app.include_router(webhooks_twilio.router)
 
