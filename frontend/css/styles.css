@@ -2917,11 +2917,15 @@ h3 {
 }
 
 /* ---------- Questions Before You Order? (landing page only) ----------
-   Two independent, equally-weighted entry points -- Chat and WhatsApp --
-   styled like .feature-card (same ivory/border/shadow language already
-   used for "Why Choose Us") but interactive: both are real controls
-   (a button and a link), so they get a visible hover/focus affordance
-   .feature-card itself doesn't need. */
+   Three equal, non-interactive cards (Chat/WhatsApp/Email) each ending in
+   its own real button/link -- styled like .feature-card (same ivory/
+   border/shadow language already used for "Why Choose Us") plus a hover
+   affordance since these are still meant to invite a click on the button
+   inside. Icon colors reuse the exact tokens the Communications Workspace
+   already uses for these same three channels (.status-badge--channel-*
+   below) rather than inventing a second palette -- WhatsApp's green in
+   particular is "the existing green WhatsApp branding already used
+   elsewhere on the site". */
 .talk-to-us {
   padding-block: var(--space-5);
 }
@@ -2931,17 +2935,15 @@ h3 {
   grid-template-columns: 1fr;
   gap: var(--space-3);
   margin-top: var(--space-4);
-  max-width: 720px;
-  margin-inline: auto;
 }
 
 @media (min-width: 640px) {
   .talk-to-us__options {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
-.talk-to-us__option {
+.talk-to-us__card {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2952,32 +2954,113 @@ h3 {
   border: 1px solid var(--color-ivory-dark);
   border-radius: var(--radius);
   box-shadow: var(--shadow-soft);
-  text-decoration: none;
-  color: inherit;
-  font-family: var(--font-body);
-  cursor: pointer;
   transition: transform 0.2s ease, border-color 0.2s ease;
 }
 
-.talk-to-us__option:hover,
-.talk-to-us__option:focus-visible {
+.talk-to-us__card:hover {
   transform: translateY(-4px);
   border-color: var(--color-gold);
 }
 
-.talk-to-us__option-icon {
-  font-size: 2rem;
-  line-height: 1;
+.talk-to-us__card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  margin-bottom: var(--space-1);
 }
 
-.talk-to-us__option-title {
+.talk-to-us__card-icon svg {
+  width: 26px;
+  height: 26px;
+}
+
+.talk-to-us__card-icon--chat {
+  background: var(--color-gold-light);
+  color: var(--color-brown);
+}
+
+.talk-to-us__card-icon--whatsapp {
+  background: #e6f2ea;
+  color: #2c7a49;
+}
+
+.talk-to-us__card-icon--email {
+  background: #e3edf7;
+  color: #2b5788;
+}
+
+.talk-to-us__card-title {
   font-family: var(--font-heading);
   font-weight: 600;
   font-size: 1.1rem;
   color: var(--color-brown);
 }
 
-.talk-to-us__option-desc {
+.talk-to-us__card-desc {
   font-size: 0.9rem;
+  color: var(--color-brown-soft);
+  flex-grow: 1;
+}
+
+.talk-to-us__card-btn {
+  margin-top: var(--space-1);
+}
+
+/* ---------- Policy/value strip (below the contact cards) ----------
+   Informational, not a warning: same calm ivory/gold language as
+   .feature-card above, just smaller and in its own three-column row --
+   deliberately not reusing .admin-review-callout's amber "needs
+   attention" styling, which would read as a caution panel here. */
+.policy-strip {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-ivory-dark);
+}
+
+@media (min-width: 640px) {
+  .policy-strip {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.policy-strip__item {
+  text-align: center;
+  padding-inline: var(--space-2);
+}
+
+.policy-strip__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--color-ivory);
+  border: 1px solid var(--color-gold-light);
+  color: var(--color-gold);
+  margin-bottom: var(--space-1);
+}
+
+.policy-strip__icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.policy-strip__title {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--color-brown);
+}
+
+.policy-strip__desc {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
   color: var(--color-brown-soft);
 }
