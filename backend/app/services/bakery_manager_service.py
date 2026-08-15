@@ -161,13 +161,37 @@ def _order_summary_line(order: dict) -> str:
 
 
 def _build_planning_prompt(context: dict) -> str:
+    """Bounded, deterministically, before Claude ever sees it -- see this
+    module's own docstring for the general principle. Two live production
+    failures (truncated JSON at max_tokens=1500, then again at 3000) were
+    both traced to the SAME root cause: this prompt used to list every
+    single confirmed/in_progress/ready order (up to ~50 on a normal day),
+    inviting Claude to write a full action object for each -- even though
+    advance_to_ready/advance_to_completed can NEVER execute regardless of
+    what Claude proposes (see _EXECUTABLE_ACTION_TYPES), so most of that
+    enumeration was pure output-budget waste, not operational value.
+
+    Now: only orders that are ACTUALLY eligible for advance_to_in_progress
+    (the one real executable candidate pool) get a line, and in_progress/
+    ready orders reuse the exact same bounded "needs attention today" set
+    briefing_service._high_priority_orders() already computes (limit=5)
+    for the Daily Briefing -- no new query, no new threshold invented.
+    Orders left out of the prompt this way are never silently dropped from
+    the manager's view: the deterministic missing-pickup-date exceptions
+    (see _missing_pickup_date_exceptions) are always built from the FULL
+    confirmed list, independent of what this function includes.
+    """
     briefing = context["briefing"]
+    eligible_confirmed = [o for o in context["confirmed_orders"] if o["_productionStartEligible"]]
     confirmed_lines = "\n".join(
-        f"{_order_summary_line(o)} production_start_eligible={o['_productionStartEligible']} ({'; '.join(o['_evidence'])})"
-        for o in context["confirmed_orders"]
-    ) or "(none)"
-    in_progress_lines = "\n".join(_order_summary_line(o) for o in context["in_progress_orders"]) or "(none)"
-    ready_lines = "\n".join(_order_summary_line(o) for o in context["ready_orders"]) or "(none)"
+        f"{_order_summary_line(o)} production_start_eligible=true ({'; '.join(o['_evidence'])})"
+        for o in eligible_confirmed
+    ) or "(none currently within the production-start window)"
+    high_priority_lines = "\n".join(
+        f"- id={o['id']} customer={o.get('customerName') or '?'} cake={o.get('templateName') or '?'} "
+        f"status={o['status']} ({o['reason']})"
+        for o in briefing["highPriorityOrders"]
+    ) or "(none flagged as high priority)"
     knowledge_context = "\n\n".join(f"[{c['title']}]\n{c['content']}" for c in context["knowledge"])
 
     return f"""You are the AI Bakery Manager for Maison de Gâteau Paris, a bakery. You PROPOSE a structured
@@ -183,9 +207,11 @@ ALLOWED actionType values — use ONLY these, never invent a new one:
 - "reprioritize_production", "staffing_adjustment", "inventory_check", "rush_order_attention" (recommend only)
 
 CRITICAL RULES:
-- "advance_to_in_progress" may only be proposed for an order where production_start_eligible=true above
-  (already computed deterministically — do not propose it for any order marked false, and do not propose
-  it for an order missing a pickup date; note that as an exception instead, do not guess a date).
+- "advance_to_in_progress" may only be proposed for one of the CONFIRMED ORDERS listed below — every one
+  shown is already deterministically eligible; do not propose it for any order not listed here.
+- Keep proposedActions focused and concise — one entry per order that genuinely needs one, not a
+  restatement of every order shown. Use the RECOMMENDATIONS lists (not proposedActions) for general
+  guidance that isn't tied to one specific order.
 - Never propose payment, refund, price, cancellation, catalog, customer-data, allergy, or send/Email/WhatsApp
   actions — these are not in the allowed actionType list and are outside your role entirely.
 - confidence is 0-100, your own honest estimate — it does not determine whether anything executes.
@@ -193,16 +219,12 @@ CRITICAL RULES:
 LIVE OPERATIONAL DATA:
 - Today: {briefing['todaysOrders']} orders, ${briefing['todaysRevenue']:.2f} revenue
 - Tomorrow's forecast: {briefing['forecast']['predictedOrders']} orders, ${briefing['forecast']['predictedRevenue']:.2f} revenue, {briefing['forecast']['workloadLevel']} workload, {briefing['forecast']['confidence']}% confidence. Reason: {briefing['forecast']['reason']}
-- High priority orders: {briefing['highPriorityOrders']}
 
-CONFIRMED ORDERS (candidates for advance_to_in_progress):
+CONFIRMED ORDERS — deterministically eligible NOW for advance_to_in_progress (the only orders this action may target):
 {confirmed_lines}
 
-IN_PROGRESS ORDERS (candidates for advance_to_ready — recommend only):
-{in_progress_lines}
-
-READY ORDERS (candidates for advance_to_completed — recommend only):
-{ready_lines}
+HIGH-PRIORITY IN-PROGRESS / READY ORDERS — recommend only, can never be executed automatically:
+{high_priority_lines}
 
 RELEVANT BAKERY OPERATING POLICY:
 {knowledge_context}

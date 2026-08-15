@@ -203,6 +203,45 @@ def test_preview_claude_call_uses_a_longer_timeout_and_output_budget_than_the_sh
     assert "max_retries" not in mock_claude.call_args.kwargs  # inherits the shared default (1), not widened
 
 
+def test_planning_prompt_only_lists_eligible_confirmed_orders_not_the_full_backlog():
+    # Third live production failure's root cause: the prompt used to list
+    # EVERY confirmed order (eligible or not), inviting Claude to enumerate
+    # far more than the real executable candidate pool. Now only orders
+    # production_start_eligible=True get a line.
+    context = {
+        "briefing": _FAKE_BRIEFING,
+        "confirmed_orders": [
+            {**_ORDER_PICKUP_SOON, "_productionStartEligible": True, "_evidence": ["due soon"]},
+            {**_ORDER_PICKUP_FAR, "_productionStartEligible": False, "_evidence": ["too far out"]},
+            {**_ORDER_NO_PICKUP, "_productionStartEligible": False, "_evidence": ["no pickup date"]},
+        ],
+        "in_progress_orders": [], "ready_orders": [], "knowledge": [],
+    }
+    prompt = bms._build_planning_prompt(context)
+    assert _ORDER_PICKUP_SOON["id"] in prompt
+    assert _ORDER_PICKUP_FAR["id"] not in prompt
+    assert _ORDER_NO_PICKUP["id"] not in prompt
+
+
+def test_planning_prompt_bounds_in_progress_and_ready_orders_to_the_high_priority_set():
+    # The other half of the same fix: in_progress/ready orders (never
+    # executable regardless of what Claude proposes) used to be dumped in
+    # full -- up to ~28 orders on a normal day. Now the prompt only shows
+    # the SAME bounded "needs attention today" set the Daily Briefing
+    # already computes (briefing_service._high_priority_orders(), limit=5)
+    # -- no new query, no new threshold.
+    many_in_progress = [{**_ORDER_PICKUP_SOON, "id": f"noisy-{i}"} for i in range(20)]
+    context = {
+        "briefing": {**_FAKE_BRIEFING, "highPriorityOrders": [
+            {"id": "urgent-1", "customerName": "Priority Customer", "templateName": "Rush Cake", "status": "in_progress", "reason": "Pickup due today"},
+        ]},
+        "confirmed_orders": [], "in_progress_orders": many_in_progress, "ready_orders": [], "knowledge": [],
+    }
+    prompt = bms._build_planning_prompt(context)
+    assert "urgent-1" in prompt
+    assert "noisy-0" not in prompt  # the unbounded backlog never reaches the prompt
+
+
 def test_claude_timeout_still_surfaces_the_deterministic_pickup_date_exceptions():
     # The exact production failure mode: Claude times out, but the
     # deterministic exception list (never dependent on Claude succeeding)
