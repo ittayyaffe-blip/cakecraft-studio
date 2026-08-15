@@ -185,7 +185,7 @@ function appendDetailRow(container, label, value) {
   container.appendChild(row);
 }
 
-function renderOrderDetail(order) {
+function renderOrderDetail(order, { justUpdatedNotificationId = null } = {}) {
   const body = document.getElementById("orderDrawerBody");
   body.innerHTML = "";
 
@@ -217,7 +217,47 @@ function renderOrderDetail(order) {
   }
 
   body.appendChild(buildStatusUpdateSection(order));
+  body.appendChild(buildCustomerUpdateSection(order, justUpdatedNotificationId));
   body.appendChild(buildAgentDraftSection(order));
+}
+
+// Customer Update (drawer section E) -- the status-change-triggered draft
+// from the Event-Driven Customer Communication Platform (already created
+// server-side, in the same PATCH .../status call as buildStatusUpdateSection's
+// button below -- see admin/orders.py's update_order_status route). This
+// section never drafts or sends anything itself; it only surfaces what the
+// backend just did, with a direct link into the existing Communications
+// Workspace so staff never has to go hunt for the right notification in
+// the list themselves (Section 7's explicit requirement).
+function buildCustomerUpdateSection(order, justUpdatedNotificationId) {
+  const section = document.createElement("div");
+  section.className = "admin-status-update";
+
+  const heading = document.createElement("h3");
+  heading.className = "admin-drawer__section-heading";
+  heading.textContent = "Customer Update";
+  section.appendChild(heading);
+
+  const message = document.createElement("p");
+  message.className = "admin-state";
+  message.setAttribute("role", "status");
+
+  if (justUpdatedNotificationId) {
+    message.textContent = "Customer update draft created.";
+    section.appendChild(message);
+
+    const reviewLink = document.createElement("a");
+    reviewLink.className = "btn btn-small";
+    reviewLink.href = `admin-notifications.html?id=${encodeURIComponent(justUpdatedNotificationId)}`;
+    reviewLink.textContent = "Review in Communications";
+    section.appendChild(reviewLink);
+  } else {
+    message.textContent =
+      "Updating the status above creates (or reuses) a customer update draft here — review and send it from Communications.";
+    section.appendChild(message);
+  }
+
+  return section;
 }
 
 // Business Intelligence Layer — lets staff request an AI-drafted
@@ -332,8 +372,11 @@ function buildStatusUpdateSection(order) {
     statusError.textContent = "";
 
     try {
-      await updateOrderStatus(order.id, select.value);
-      await openOrderDrawer(order.id); // re-render the drawer with fresh data
+      const result = await updateOrderStatus(order.id, select.value);
+      // re-render the drawer with fresh data, carrying the just-created (or
+      // reused) draft's id through so the Customer Update section can link
+      // straight to it -- see buildCustomerUpdateSection.
+      await openOrderDrawer(order.id, { justUpdatedNotificationId: result.notificationId });
       loadOrders(); // refresh the table/pagination behind it
     } catch (error) {
       statusError.textContent = error.message || "Unable to update status.";
@@ -348,7 +391,7 @@ function buildStatusUpdateSection(order) {
   return section;
 }
 
-async function openOrderDrawer(orderId) {
+async function openOrderDrawer(orderId, { justUpdatedNotificationId = null } = {}) {
   const backdrop = document.getElementById("orderDrawerBackdrop");
   const drawer = document.getElementById("orderDrawer");
   const body = document.getElementById("orderDrawerBody");
@@ -362,7 +405,7 @@ async function openOrderDrawer(orderId) {
 
   try {
     const order = await getAdminOrder(orderId);
-    renderOrderDetail(order);
+    renderOrderDetail(order, { justUpdatedNotificationId });
   } catch (error) {
     renderErrorState(body, "Unable to load this order.");
   }

@@ -104,20 +104,55 @@ def get_event_label(event_key: str) -> str:
     return notification_templates.EVENT_LABELS.get(event_key, event_key)
 
 
-def _insert_queued(order: dict, event_key: str, *, created_at: str | None = None) -> dict:
+def _customer_prefers_whatsapp(customer_id: str) -> bool:
+    """Deterministic channel preference for a new order-status draft:
+    reuses existing data (never guessed) -- if this customer has ANY
+    prior WhatsApp activity, either a notification actually sent that
+    way or a message they sent in, continue on WhatsApp; otherwise fall
+    back to "email" (the long-standing default). Two small, targeted
+    existence checks (LIMIT 1 each), not the full history
+    list_notifications_for_customer/inbound_service.
+    get_whatsapp_conversation build for the Communications drawer --
+    this module can't import inbound_service (it already imports this
+    one), so it queries `inbound_messages` directly instead.
+    """
+    sent = (
+        supabase.table("notifications")
+        .select("id")
+        .eq("customer_id", customer_id)
+        .eq("channel", "whatsapp")
+        .limit(1)
+        .execute()
+    )
+    if sent.data:
+        return True
+    received = (
+        supabase.table("inbound_messages")
+        .select("id")
+        .eq("customer_id", customer_id)
+        .eq("channel", "whatsapp")
+        .limit(1)
+        .execute()
+    )
+    return bool(received.data)
+
+
+def _insert_queued(order: dict, event_key: str, *, channel: str = "email", created_at: str | None = None) -> dict:
     payload = {
         "order_id": order["id"],
         "customer_id": order["customer_id"],
         "event": event_key,
         "status": "queued",
-        # Default to "email" from creation, same as agent_service.
-        # draft_customer_communication already does for AI drafts — a
-        # notification's intended channel should be knowable the moment
-        # it exists, not only once it's actually sent (_dispatch() would
-        # otherwise resolve a null channel to DEFAULT_CHANNEL at send
-        # time regardless, so this makes the visible value match the
-        # real one, it doesn't change dispatch behavior).
-        "channel": "email",
+        # Known from creation, same as agent_service.draft_customer_
+        # communication already does for AI drafts — a notification's
+        # intended channel should be knowable the moment it exists, not
+        # only once it's actually sent (_dispatch() would otherwise
+        # resolve a null channel to DEFAULT_CHANNEL at send time
+        # regardless, so this makes the visible value match the real
+        # one, it doesn't change dispatch behavior). Defaults to "email"
+        # (unchanged); callers with a real channel preference (see
+        # _customer_prefers_whatsapp) pass it explicitly.
+        "channel": channel,
     }
     if created_at is not None:
         payload["created_at"] = created_at
@@ -204,7 +239,8 @@ def create_notification_for_order_event(
             )
             return existing
 
-        queued = _insert_queued(order, template["event"], created_at=created_at)
+        channel = "whatsapp" if _customer_prefers_whatsapp(order["customer_id"]) else "email"
+        queued = _insert_queued(order, template["event"], channel=channel, created_at=created_at)
         return _render_draft(queued, template, order)
     except Exception:
         logger.exception(

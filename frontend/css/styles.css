@@ -2118,18 +2118,29 @@ h3 {
   padding: var(--space-3);
 }
 
-/* Communication drawer only (#notificationDrawer, admin-notifications.html)
-   -- ID-scoped so admin-orders.html's #orderDrawer (the .admin-drawer
-   class's other user) is completely unaffected. Roomier on desktop for
-   the WhatsApp Conversation thread (see .whatsapp-thread__messages
-   below) and the Preview section (see .notification-preview textarea
-   below); everything below 1024px keeps .admin-drawer's existing
-   100%/420px sizing unchanged, same responsive floor every other drawer
-   already has. */
+/* Communication + Order drawers only (#notificationDrawer,
+   admin-notifications.html; #orderDrawer, admin-orders.html) -- ID-scoped
+   so any future .admin-drawer user stays unaffected by default. Roomier
+   on desktop for the WhatsApp Conversation thread (see
+   .whatsapp-thread__messages below), the Preview section (see
+   .notification-preview textarea below), and the Order Details drawer's
+   own sections (see .admin-detail-row below); everything below 1024px
+   keeps .admin-drawer's existing 100%/420px sizing unchanged, same
+   responsive floor every other drawer already has. */
 @media (min-width: 1024px) {
-  #notificationDrawer {
+  #notificationDrawer,
+  #orderDrawer {
     width: 60vw;
     max-width: 1300px;
+  }
+
+  #orderDrawer .admin-detail-row {
+    font-size: 1rem;
+    padding: 0.7rem 0;
+  }
+
+  #orderDrawer .admin-drawer__section-heading {
+    font-size: 1.1rem;
   }
 }
 

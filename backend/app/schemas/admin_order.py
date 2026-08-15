@@ -66,3 +66,19 @@ class AdminOrderListResponse(BaseModel):
 
 class OrderStatusUpdateRequest(BaseModel):
     status: str
+
+
+class OrderStatusUpdateResponse(AdminOrderDetail):
+    """Same shape as AdminOrderDetail (the updated order) plus the id of
+    the customer-update draft this transition created or reused, if the
+    new status has a customer-facing template (see
+    notification_templates.py -- every real status has one today). None
+    only if drafting itself failed (create_notification_for_order_event
+    never raises, see its own docstring -- a genuine failure there just
+    means no draft, not a failed status update). Lets the drawer show
+    "Customer update draft created" with a direct link into
+    Communications right after the click that caused it, with no second
+    round trip needed to find which notification it was.
+    """
+
+    notificationId: str | None = None

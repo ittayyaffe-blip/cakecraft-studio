@@ -197,18 +197,61 @@ def get_order_by_id(order_id: str) -> dict | None:
     return response.data if response is not None else None
 
 
-def update_order_status(order_id: str, new_status: str) -> dict:
+# The normal production path is strictly linear, staff-driven one step at
+# a time: confirmed -> in_progress -> ready -> completed. pending ->
+# confirmed is listed too (a manual override stays possible through this
+# same route), but is normally automatic instead, via
+# payment_service.simulate_payment -- which writes the orders row
+# directly and never calls update_order_status, so this validation never
+# affects that path (see that function's own docstring). cancelled is
+# reachable from any non-terminal status; completed/cancelled are
+# terminal, nothing transitions out of either. One fixed dict, not a
+# general workflow engine, matching this project's existing "smallest
+# sensible" bar for validation.
+_ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    "pending": {"confirmed", "cancelled"},
+    "confirmed": {"in_progress", "cancelled"},
+    "in_progress": {"ready", "cancelled"},
+    "ready": {"completed", "cancelled"},
+    "completed": set(),
+    "cancelled": set(),
+}
+
+
+def update_order_status(order_id: str, new_status: str, *, current_status: str | None = None) -> dict:
     """Update an order's status and return the updated, joined order.
 
-    Raises ValueError for a status outside ORDER_STATUSES, mirroring the DB
-    check constraint but checked here first so a bad status is a clean 400
-    rather than a raw database error. Assumes the order's existence has
-    already been confirmed by the caller (see
-    app/api/routes/admin/orders.py, which needs the *previous* status for
-    the audit log entry anyway, so it already fetches the order first).
+    Raises ValueError for a status outside ORDER_STATUSES (mirrors the DB
+    check constraint, checked here first for a clean 400) or for a
+    transition that skips or reverses the normal production path (see
+    _ALLOWED_STATUS_TRANSITIONS) -- also a clean 400 rather than a
+    silently-accepted invalid jump. Assumes the order's existence has
+    already been confirmed by the caller (see app/api/routes/admin/
+    orders.py, which needs the *previous* status for the audit log entry
+    anyway, so it already fetches the order first).
+
+    `current_status` lets a caller that already has it (the admin route
+    does, for its own audit log) skip a redundant fetch here; if omitted,
+    it's looked up internally so this function stays safe to call on its
+    own too.
     """
     if new_status not in ORDER_STATUSES:
         raise ValueError(f"Invalid status: {new_status}")
+
+    if current_status is None:
+        existing = get_order_by_id(order_id)
+        current_status = existing["status"] if existing else None
+
+    # Re-saving the same status (the admin drawer's dropdown defaults to
+    # the order's current status) is a harmless no-op, not a transition --
+    # never rejected. create_notification_for_order_event's own
+    # idempotency check means this never drafts a duplicate either.
+    if (
+        current_status is not None
+        and new_status != current_status
+        and new_status not in _ALLOWED_STATUS_TRANSITIONS.get(current_status, set())
+    ):
+        raise ValueError(f"Cannot move an order from '{current_status}' to '{new_status}'")
 
     supabase.table("orders").update({"status": new_status}).eq("id", order_id).execute()
     return get_order_by_id(order_id)

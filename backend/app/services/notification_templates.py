@@ -51,8 +51,8 @@ ORDER_STATUS_EVENT_TEMPLATES = {
         "label": "Baking Started",
         "subject": "We've started working on your cake!",
         "body": (
-            "Hi {customer_name}, our bakers have started on your {template_name}. "
-            "It's in good hands!"
+            "Great news, {customer_name}! 🎂 We've started preparing your "
+            "{template_name}. We'll let you know as soon as it's ready."
         ),
     },
     "ready": {
@@ -60,8 +60,8 @@ ORDER_STATUS_EVENT_TEMPLATES = {
         "label": "Ready for Pickup",
         "subject": "Your cake is ready for pickup!",
         "body": (
-            "Hi {customer_name}, your {template_name} is ready whenever you are. "
-            "See you soon!"
+            "Your cake is ready! ✨ Your {template_name} is ready for pickup "
+            "whenever you are, {customer_name}. See you soon!"
         ),
     },
     "completed": {
@@ -69,8 +69,8 @@ ORDER_STATUS_EVENT_TEMPLATES = {
         "label": "Completed",
         "subject": "Thank you for your order!",
         "body": (
-            "Hi {customer_name}, thank you for choosing Maison de Gâteau Paris for "
-            "your {template_name}. We hope you loved it!"
+            "Thank you for choosing Maison de Gâteau Paris for your "
+            "{template_name}, {customer_name}! 🎂 We hope you loved every bite."
         ),
     },
     "cancelled": {

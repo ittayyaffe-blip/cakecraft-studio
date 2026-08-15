@@ -25,6 +25,7 @@ from app.schemas.admin_order import (
     AdminOrderDetail,
     AdminOrderListResponse,
     OrderStatusUpdateRequest,
+    OrderStatusUpdateResponse,
 )
 from app.services import notification_service, order_service, payment_service
 from app.services.auth_service import AdminIdentity
@@ -69,7 +70,7 @@ def get_order(order_id: uuid.UUID, admin: AdminIdentity = Depends(get_current_ad
     return {**order, "payment": payment}
 
 
-@router.patch("/{order_id}/status", response_model=AdminOrderDetail)
+@router.patch("/{order_id}/status", response_model=OrderStatusUpdateResponse)
 def update_order_status(
     order_id: uuid.UUID,
     body: OrderStatusUpdateRequest,
@@ -87,7 +88,7 @@ def update_order_status(
         raise HTTPException(status_code=404, detail="Order not found")
 
     try:
-        updated = order_service.update_order_status(order_id_str, body.status)
+        updated = order_service.update_order_status(order_id_str, body.status, current_status=existing["status"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception:
@@ -104,8 +105,13 @@ def update_order_status(
     )
 
     # Event-Driven Customer Communication Platform: queue + render a
-    # notification for this transition, if it's one customers care about.
-    # Fails safe (see its docstring) — never blocks the status update above.
-    notification_service.create_notification_for_order_event(updated, body.status)
+    # notification for this transition, if it's one customers care about
+    # (every real status has a template today -- see notification_
+    # templates.py). Idempotent per (order, event) -- a repeated update to
+    # the same status (or a re-save of the status it's already at, now a
+    # no-op per update_order_status's own guard) never drafts twice. Fails
+    # safe (see its own docstring) — never blocks the status update above;
+    # notification stays None only if drafting itself genuinely failed.
+    notification = notification_service.create_notification_for_order_event(updated, body.status)
 
-    return updated
+    return {**updated, "notificationId": notification["id"] if notification else None}

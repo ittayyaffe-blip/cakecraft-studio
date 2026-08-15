@@ -262,9 +262,9 @@ def _mock_no_existing_event_notification(mock_supabase) -> None:
 
 
 def test_create_notification_for_order_event_defaults_channel_to_email():
-    # The automated, order-status-triggered path must know its intended
-    # channel from creation, same as the AI Agent's draft path already
-    # does -- not only once _dispatch() resolves one at send time.
+    # No prior WhatsApp activity for this customer (the shared mock's
+    # empty response covers both _customer_prefers_whatsapp checks too)
+    # -- falls back to the long-standing "email" default.
     with patch.object(notification_service, "supabase") as mock_supabase:
         _mock_no_existing_event_notification(mock_supabase)
         mock_supabase.table.return_value.insert.return_value.execute.return_value = SimpleNamespace(
@@ -280,6 +280,30 @@ def test_create_notification_for_order_event_defaults_channel_to_email():
 
         inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
         assert inserted_payload["channel"] == "email"
+
+
+def test_create_notification_for_order_event_prefers_whatsapp_when_the_customer_has_used_it_before():
+    # Reuses real, existing data -- never guessed (see this module's own
+    # note on why "no deterministic preference" isn't the common case
+    # here). The customer already has a notification that went out via
+    # WhatsApp, so this status-update draft continues there instead of
+    # defaulting to email.
+    with patch.object(notification_service, "supabase") as mock_supabase:
+        mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.side_effect = [
+            SimpleNamespace(data=[]),  # idempotency check: no existing draft for this event
+            SimpleNamespace(data=[{"id": "notif-old"}]),  # _customer_prefers_whatsapp: sent via whatsapp before
+        ]
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": "notif-4", "status": "queued", "channel": "whatsapp"}]
+        )
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": "notif-4", "status": "draft", "channel": "whatsapp", "subject": "x", "body": "y"}]
+        )
+
+        notification_service.create_notification_for_order_event(ORDER, "confirmed")
+
+        inserted_payload = mock_supabase.table.return_value.insert.call_args.args[0]
+        assert inserted_payload["channel"] == "whatsapp"
 
 
 def test_create_notification_for_order_event_is_idempotent():

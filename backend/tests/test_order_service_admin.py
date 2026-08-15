@@ -10,6 +10,7 @@ actually call Supabase (`list_orders`, `get_order_by_id`,
 against the real deployment instead — see docs/EPIC1_BACKOFFICE.md.
 """
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.services import order_service
@@ -47,6 +48,85 @@ def test_update_order_status_rejects_invalid_status():
         assert "not-a-real-status" in str(exc)
     else:
         raise AssertionError("expected ValueError, none was raised")
+
+
+# --- Production-path transition validation (Order Stage workflow) ----------
+# pending -> confirmed is normally automatic, via payment_service.
+# simulate_payment (which never calls this function -- see its own
+# docstring), so this validation never affects that path; it governs the
+# admin-driven staff workflow only.
+
+
+def _mock_update_and_refetch(mock_supabase, updated_order):
+    mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+        data=[updated_order]
+    )
+    mock_supabase.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = (
+        SimpleNamespace(data=updated_order)
+    )
+
+
+def test_update_order_status_allows_the_normal_production_path():
+    steps = [("pending", "confirmed"), ("confirmed", "in_progress"), ("in_progress", "ready"), ("ready", "completed")]
+    for current, new in steps:
+        with patch.object(order_service, "supabase") as mock_supabase:
+            _mock_update_and_refetch(mock_supabase, {"id": "order-1", "status": new})
+            result = update_order_status("order-1", new, current_status=current)
+        assert result["status"] == new, f"{current} -> {new} should be allowed"
+
+
+def test_update_order_status_allows_cancel_from_any_non_terminal_status():
+    for current in ("pending", "confirmed", "in_progress", "ready"):
+        with patch.object(order_service, "supabase") as mock_supabase:
+            _mock_update_and_refetch(mock_supabase, {"id": "order-1", "status": "cancelled"})
+            result = update_order_status("order-1", "cancelled", current_status=current)
+        assert result["status"] == "cancelled", f"cancel from {current} should be allowed"
+
+
+def test_update_order_status_allows_resaving_the_same_status_as_a_no_op():
+    # The admin drawer's status dropdown defaults to the order's current
+    # status -- clicking Update Status without changing it must not error.
+    with patch.object(order_service, "supabase") as mock_supabase:
+        _mock_update_and_refetch(mock_supabase, {"id": "order-1", "status": "confirmed"})
+        result = update_order_status("order-1", "confirmed", current_status="confirmed")
+    assert result["status"] == "confirmed"
+
+
+def test_update_order_status_rejects_skipping_a_production_stage():
+    jumps = [
+        ("pending", "in_progress"), ("pending", "ready"), ("pending", "completed"),
+        ("confirmed", "ready"), ("confirmed", "completed"), ("in_progress", "completed"),
+    ]
+    for current, new in jumps:
+        try:
+            update_order_status("order-1", new, current_status=current)
+        except ValueError as exc:
+            assert current in str(exc) and new in str(exc)
+        else:
+            raise AssertionError(f"expected ValueError for {current} -> {new}")
+
+
+def test_update_order_status_rejects_moving_backward():
+    for current, new in [("in_progress", "confirmed"), ("ready", "in_progress"), ("completed", "ready")]:
+        try:
+            update_order_status("order-1", new, current_status=current)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {current} -> {new}")
+
+
+def test_update_order_status_rejects_any_transition_out_of_a_terminal_status():
+    for current in ("completed", "cancelled"):
+        for new in ORDER_STATUSES:
+            if new == current:
+                continue
+            try:
+                update_order_status("order-1", new, current_status=current)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"expected ValueError for {current} -> {new}")
 
 
 # --- find_open_order_for_customer (Step 3) ----------------------------
