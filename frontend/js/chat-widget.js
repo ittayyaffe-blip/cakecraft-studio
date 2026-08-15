@@ -326,9 +326,9 @@ function initChatWidget() {
     try {
       const result = await payOrder(orderId);
       const text =
-        `Payment received successfully.\nYour order is now confirmed.\n` +
-        `Reference: ${result.simulatedReference}\nTotal paid: $${Number(result.amount).toFixed(2)}\n` +
-        `We'll keep you updated as your cake moves through production.`;
+        `Thank you! 🎂\n\nPayment successful — your CakeCraft order is confirmed.\n\n` +
+        `Order: #${orderId}\nTotal paid: $${Number(result.amount).toFixed(2)}\n\n` +
+        `We'll keep you updated as your cake moves through preparation.`;
       messages.appendChild(buildMessageBubble("order-success", text));
       appendChatHistory({ role: "order-success", text });
       button.remove();

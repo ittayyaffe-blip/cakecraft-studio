@@ -1620,6 +1620,22 @@ def run_order_assistant_turn(
             price_line = (
                 f"Total: ${created_order['total_price']:.2f}\n" if created_order is not None else ""
             )
+            # A warm, personalized recap of exactly what was just ordered --
+            # names/servings come from the same `names`/`options` lookups
+            # already built above (no new data, just fuller use of it).
+            first_name = (customer.get("name") or "").split()[0] if customer.get("name") else None
+            greeting = f"Perfect, {first_name}! 🎂" if first_name else "Perfect! 🎂"
+            size = next((s for s in options["cake_sizes"] if s["id"] == updated["cakeSizeId"]), None)
+            size_line = names.get(updated["cakeSizeId"], "")
+            if size and size.get("servings_min") is not None and size.get("servings_max") is not None:
+                size_line = f"{size_line} — serves {size['servings_min']}-{size['servings_max']}"
+            summary_lines = "\n".join([
+                names.get(updated["templateId"], ""),
+                size_line,
+                names.get(updated["flavorId"], ""),
+                names.get(updated["fillingId"], ""),
+                names.get(updated["frostingId"], ""),
+            ])
             # Payment is a separate, explicit customer action from order
             # confirmation (see this function's own docstring) -- never
             # triggered here. Chat gets a real "Pay Now" button appended
@@ -1632,7 +1648,8 @@ def run_order_assistant_turn(
             if channel == "whatsapp":
                 pay_link = f"{_CUSTOMER_SITE_BASE}/payment.html?order={order_id}"
                 reply_text = (
-                    f"🎂 Your CakeCraft order has been created.\n\n"
+                    f"{greeting}\n\nYour cake is ready for the final step.\n\n"
+                    f"{summary_lines}\n\n"
                     f"Order: #{order_id}\n"
                     f"{price_line}"
                     f"Payment: Pending\n\n"
@@ -1640,7 +1657,8 @@ def run_order_assistant_turn(
                 )
             else:
                 reply_text = (
-                    f"🎂 Your cake is ready for the final step.\n\n"
+                    f"{greeting}\n\nYour cake is ready for the final step.\n\n"
+                    f"{summary_lines}\n\n"
                     f"Order: #{order_id}\n"
                     f"{price_line}"
                     f"Payment: Pending\n\n"

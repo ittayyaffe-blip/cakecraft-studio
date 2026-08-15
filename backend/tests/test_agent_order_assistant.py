@@ -1060,6 +1060,23 @@ def test_prompt_includes_awaiting_confirmation_note_only_when_flagged():
     assert "already asked the customer to confirm this exact order" not in prompt_without
 
 
+def test_pending_order_reply_recaps_the_real_cake_selections():
+    # The post-creation message now shows what was actually ordered
+    # (design/size/flavor/filling/frosting), not just the order id/total
+    # -- all from the real, already-known draft/catalog data, nothing new
+    # fetched or invented.
+    result, _, _, _sb = _run(
+        "please do",
+        {**_MEDIUM_CONFIRMATION_DRAFT, "awaitingOrderConfirmation": True},
+        {"confirmedNow": True, "reply": "..."},
+    )
+    assert result["order_created"] is True
+    assert "Classic Vanilla" in result["reply"]
+    assert "Medium — serves 12-15" in result["reply"]
+    assert "Chocolate" in result["reply"]  # flavor
+    assert "Buttercream" in result["reply"]  # frosting
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:
