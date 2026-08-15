@@ -1922,6 +1922,27 @@ def test_payment_prompt_states_paid_and_confirmed_once_payment_succeeded():
     assert "Payment status: paid (order confirmed), reference SIM-ABC123" in sent_prompt
 
 
+# --- Performance: bounded Claude latency, not the SDK's 600s/2-retry default -
+
+def test_claude_client_uses_a_bounded_timeout_and_fewer_retries_than_the_sdk_default():
+    # A real production /chat/order call was observed taking up to 80s --
+    # the anthropic SDK's own defaults (confirmed via introspection) are a
+    # 600s read timeout with 2 retries. This locks in the fix: an explicit,
+    # customer-latency-appropriate timeout/retry budget on every call.
+    with (
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = _fake_claude_json_response(
+            intent="OTHER", body="..."
+        )
+        agent_service._claude("a prompt")
+
+    _args, kwargs = mock_anthropic_cls.call_args
+    assert kwargs["timeout"] <= 25.0
+    assert kwargs["max_retries"] <= 1
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

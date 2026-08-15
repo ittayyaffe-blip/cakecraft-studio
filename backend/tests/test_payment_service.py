@@ -209,6 +209,19 @@ def test_get_or_create_payment_reuses_the_one_existing_row_never_a_second():
     mock_supabase.table.return_value.insert.assert_not_called()  # unique(order_id) -- never a second row
 
 
+# --- Performance/safety: no Claude, no real send, in the Pay Now path ------
+
+
+def test_payment_service_has_no_anthropic_or_communication_dependency():
+    # Structural proof, not an inference: payment_service.py simply never
+    # imports either -- there is no code path from Pay Now to a Claude
+    # call or a real Gmail/Twilio send (create_notification_for_order_
+    # event only ever drafts -- see notification_service.py's own
+    # docstring on send() being a separate, untouched boundary).
+    assert not hasattr(payment_service, "anthropic")
+    assert not hasattr(payment_service, "communication")
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

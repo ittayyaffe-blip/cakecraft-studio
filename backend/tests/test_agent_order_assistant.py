@@ -103,6 +103,7 @@ def _run(
     """Shared harness: patches every external boundary, returns
     run_order_assistant_turn's result plus the mocks for assertions.
     """
+    agent_service._catalog_cache.clear()  # this file's tests all run within one TTL window -- see that cache's own note
     with (
         patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
         patch.object(agent_service.template_service, "get_active_templates", return_value=_TEMPLATES),
@@ -254,6 +255,7 @@ def test_confirmed_complete_order_calls_the_existing_order_service():
 
 def test_created_order_associated_with_the_correct_customer():
     other_customer = {"id": "cust-2", "name": "Amir Cohen", "email": "amir@example.com"}
+    agent_service._catalog_cache.clear()
     with (
         patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
         patch.object(agent_service.template_service, "get_active_templates", return_value=_TEMPLATES),
@@ -292,6 +294,7 @@ def test_order_creation_failure_returns_safe_message_no_duplicate_creation():
 
 
 def test_claude_call_failure_returns_safe_message_and_unchanged_draft():
+    agent_service._catalog_cache.clear()
     with (
         patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
         patch.object(agent_service.template_service, "get_active_templates", return_value=_TEMPLATES),
@@ -419,6 +422,7 @@ def test_first_turn_prompt_already_shows_the_seeded_size_and_real_catalog_before
     # infer it, and the real Birthday catalog is right there too, so the
     # reply can list real options instead of asking again.
     trigger = "I would like to order a birthday cake for 20 people."
+    agent_service._catalog_cache.clear()
     with (
         patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
         patch.object(agent_service.template_service, "get_active_templates", return_value=_TEMPLATES),
@@ -650,6 +654,7 @@ def test_conversation_history_is_folded_into_the_prompt_for_whatsapp():
         {"direction": "incoming", "body": "I want a birthday cake for 20 people", "timestamp": "t1"},
         {"direction": "outgoing", "body": "Great, what design would you like?", "timestamp": "t2"},
     ]
+    agent_service._catalog_cache.clear()
     with (
         patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
         patch.object(agent_service.template_service, "get_active_templates", return_value=_TEMPLATES),
@@ -802,6 +807,7 @@ def test_reported_create_order_failure_is_reproduced_and_fixed():
     # (see this file's _run harness for every OTHER test, which mocks
     # create_order entirely -- this one deliberately lets the REAL function
     # run, so it would have failed against the pre-fix code).
+    agent_service._catalog_cache.clear()
     with (
         patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
         patch.object(agent_service.template_service, "get_active_templates", return_value=_TEMPLATES),

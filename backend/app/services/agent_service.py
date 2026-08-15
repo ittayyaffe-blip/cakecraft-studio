@@ -44,6 +44,7 @@ share, so those rules exist in exactly one place.
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -65,13 +66,47 @@ logger = logging.getLogger(__name__)
 
 _MODEL = "claude-sonnet-5"
 
+# Tiny, dependency-free TTL cache for the two catalog reads every chat-
+# assisted order turn makes (template_service.get_active_templates,
+# designer_service.get_designer_options) -- a real conversation is several
+# turns in quick succession, each re-fetching the same, rarely-changing
+# catalog. Deliberately NOT used by order_service.create_order()'s own
+# validation calls (it imports these functions directly, never through
+# this cache) -- the actual "is this combination still valid" check stays
+# fully fresh every time; this only smooths out the in-conversation reads
+# that lead up to it. No Redis/new infra -- a process-local dict is
+# plenty at this scale, and worst case (a multi-instance deploy) just
+# means each instance warms its own copy.
+_CATALOG_CACHE_TTL_SECONDS = 30
+_catalog_cache: dict[str, tuple[float, object]] = {}
+
+
+def _cached(key: str, fetch):
+    now = time.monotonic()
+    cached = _catalog_cache.get(key)
+    if cached is not None and now - cached[0] < _CATALOG_CACHE_TTL_SECONDS:
+        return cached[1]
+    value = fetch()
+    _catalog_cache[key] = (now, value)
+    return value
+
 
 def is_configured() -> bool:
     return bool(settings.anthropic_api_key)
 
 
 def _claude(prompt: str, max_tokens: int = 700) -> str:
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    # timeout/max_retries: the SDK's own defaults are a 600s read timeout
+    # with 2 retries (confirmed via introspection, not assumed) -- a slow
+    # or transiently-erroring call could legitimately hang for minutes
+    # before this project's own try/except around every _claude() call
+    # site ever got a chance to fall back to a safe message. Real
+    # production /chat/order calls were observed taking 55-80s. 20s is
+    # generous for a JSON-only reply with thinking disabled; one retry
+    # (not the default two) keeps the worst case bounded to roughly
+    # 40-45s instead of open-ended, while still recovering from a single
+    # transient network hiccup.
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=20.0, max_retries=1)
     # Extended thinking is on by default for claude-sonnet-5 and counts
     # against max_tokens — for straightforward "synthesize this
     # structured data into a paragraph" tasks it added latency/cost with
@@ -1449,8 +1484,10 @@ def run_order_assistant_turn(
             "ai_status": "failed",
         }
 
-    templates = template_service.get_active_templates()
-    options = designer_service.get_designer_options()
+    # Cached (see this module's own note) -- create_order()'s own
+    # validation below is entirely separate and always fresh.
+    templates = _cached("templates", template_service.get_active_templates)
+    options = _cached("options", designer_service.get_designer_options)
     valid_ids = {
         "templateId": {t["id"] for t in templates},
         "cakeSizeId": {o["id"] for o in options["cake_sizes"]},

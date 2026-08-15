@@ -45,7 +45,9 @@ function showPaymentSuccess(orderId, referenceText) {
 async function handlePayNow(orderId) {
   const btn = document.getElementById("payNowBtn");
   const errorEl = document.getElementById("paymentError");
+  if (btn.disabled) return; // already processing -- blocks a duplicate click
   btn.disabled = true;
+  btn.textContent = "Processing payment…";
   errorEl.classList.add("is-hidden");
 
   try {
@@ -55,9 +57,15 @@ async function handlePayNow(orderId) {
       `Demo transaction reference: ${result.simulatedReference} — Total paid: ${formatCurrency(result.amount)}`
     );
   } catch (error) {
-    errorEl.textContent = "Payment could not be processed. Please try again.";
+    // Payment is idempotent server-side (see payOrder's own note in
+    // api.js) -- safe to simply let the customer try again.
+    errorEl.textContent =
+      error && error.message === "Request timed out"
+        ? "Payment is taking longer than expected. It's safe to try again."
+        : "Payment could not be processed. Please try again.";
     errorEl.classList.remove("is-hidden");
     btn.disabled = false;
+    btn.textContent = "Pay Now (Simulated)";
   }
 }
 

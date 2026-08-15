@@ -104,6 +104,23 @@ function appendTextWithLinks(container, text) {
   });
 }
 
+// Shown the instant a question/order message is sent, removed the
+// instant a real response (or error) arrives -- so a Claude call that
+// takes a few seconds never reads as a frozen page. Not part of the
+// persisted transcript (never passed to appendChatHistory), same as
+// buildOrderNudge/buildPayNowButton below.
+function buildThinkingIndicator() {
+  const bubble = document.createElement("div");
+  bubble.className = "chat-widget__bubble chat-widget__bubble--assistant chat-widget__bubble--thinking";
+  bubble.textContent = "Thinking…";
+  // Visually transient without touching the stylesheet -- this bubble
+  // never outlives one request, so a one-off inline style is simpler
+  // than adding a new CSS rule for it.
+  bubble.style.opacity = "0.7";
+  bubble.style.fontStyle = "italic";
+  return bubble;
+}
+
 function buildMessageBubble(role, text) {
   const bubble = document.createElement("div");
   bubble.className =
@@ -243,6 +260,12 @@ function initChatWidget() {
   // asking again (see ChatOrderRequest.triggerContext's own note). Not a
   // broader history import: cleared immediately after that first send.
   let orderTriggerContext = null;
+  // Set the instant sendQuestion/sendOrderMessage starts, cleared in
+  // their own `finally` -- the composer's submit handler checks this
+  // before starting a new request, so a duplicate Send (double-click,
+  // Enter spam) while one is already pending is a no-op instead of
+  // firing a second overlapping request.
+  let requestInFlight = false;
 
   const startOrderingMode = (triggerMessage) => {
     orderingMode = true;
@@ -288,6 +311,10 @@ function initChatWidget() {
     messages.scrollTop = messages.scrollHeight;
     errorEl.classList.add("is-hidden");
     sendBtn.disabled = true;
+    requestInFlight = true;
+    const thinkingBubble = buildThinkingIndicator();
+    messages.appendChild(thinkingBubble);
+    messages.scrollTop = messages.scrollHeight;
 
     try {
       const response = await askChat({
@@ -296,6 +323,7 @@ function initChatWidget() {
         question,
         orderId: getOrderIdFromUrl() || undefined,
       });
+      thinkingBubble.remove();
       messages.appendChild(buildMessageBubble("assistant", response.answer));
       appendChatHistory({ role: "assistant", text: response.answer });
       // Chat-assisted ordering MVP: offer to start collecting an order
@@ -307,10 +335,15 @@ function initChatWidget() {
       }
       messages.scrollTop = messages.scrollHeight;
     } catch (error) {
-      errorEl.textContent = "Sorry, something went wrong. Please try again.";
+      thinkingBubble.remove();
+      errorEl.textContent =
+        error && error.message === "Request timed out"
+          ? "That's taking longer than expected — please try again."
+          : "Sorry, something went wrong. Please try again.";
       errorEl.classList.remove("is-hidden");
     } finally {
       sendBtn.disabled = false;
+      requestInFlight = false;
     }
   };
 
@@ -320,7 +353,9 @@ function initChatWidget() {
   // see payment_service.simulate_payment's own docstring). Rendered text
   // comes entirely from the real backend response.
   const handlePayNow = async (orderId, button) => {
+    if (button.disabled) return; // already processing -- blocks a duplicate click
     button.disabled = true;
+    button.textContent = "Processing payment…";
     errorEl.classList.add("is-hidden");
 
     try {
@@ -333,9 +368,17 @@ function initChatWidget() {
       appendChatHistory({ role: "order-success", text });
       button.remove();
     } catch (error) {
-      errorEl.textContent = "Sorry, something went wrong processing payment. Please try again.";
+      // Payment is idempotent server-side (see payOrder's own note) --
+      // safe to simply let the customer try again; a retry either
+      // completes the same payment or, if it already went through,
+      // returns that same result rather than charging (simulated) twice.
+      errorEl.textContent =
+        error && error.message === "Request timed out"
+          ? "Payment is taking longer than expected. It's safe to try again."
+          : "Sorry, something went wrong processing payment. Please try again.";
       errorEl.classList.remove("is-hidden");
       button.disabled = false;
+      button.textContent = "Pay Now (Simulated)";
     }
     messages.scrollTop = messages.scrollHeight;
   };
@@ -359,6 +402,10 @@ function initChatWidget() {
     }
     errorEl.classList.add("is-hidden");
     sendBtn.disabled = true;
+    requestInFlight = true;
+    const thinkingBubble = buildThinkingIndicator();
+    messages.appendChild(thinkingBubble);
+    messages.scrollTop = messages.scrollHeight;
 
     // Only ever sent on the first order-assistant turn (see
     // startOrderingMode) -- cleared immediately regardless of outcome so
@@ -374,6 +421,7 @@ function initChatWidget() {
         draft: orderDraft,
         triggerContext: triggerContext || undefined,
       });
+      thinkingBubble.remove();
       orderDraft = response.draft;
 
       if (response.orderCreated) {
@@ -390,15 +438,21 @@ function initChatWidget() {
       }
       messages.scrollTop = messages.scrollHeight;
     } catch (error) {
-      errorEl.textContent = "Sorry, something went wrong. Please try again.";
+      thinkingBubble.remove();
+      errorEl.textContent =
+        error && error.message === "Request timed out"
+          ? "That's taking longer than expected — please try again."
+          : "Sorry, something went wrong. Please try again.";
       errorEl.classList.remove("is-hidden");
     } finally {
       sendBtn.disabled = false;
+      requestInFlight = false;
     }
   };
 
   composer.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (requestInFlight) return;
     const text = questionInput.value.trim();
     if (!text) return;
     questionInput.value = "";

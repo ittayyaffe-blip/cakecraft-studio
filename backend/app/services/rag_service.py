@@ -147,7 +147,9 @@ def answer_question(question: str, top_k: int = 5) -> dict:
         }
 
     try:
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        # timeout/max_retries: see agent_service._claude's own comment on
+        # why the SDK's 600s/2-retry defaults are far too generous here.
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=20.0, max_retries=1)
         # thinking disabled: see agent_service._claude's docstring
         # comment — extended thinking otherwise consumes the token
         # budget with no benefit for this kind of grounded-synthesis task.
