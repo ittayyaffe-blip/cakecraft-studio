@@ -12,7 +12,7 @@ These five documents describe the system **as it exists in the final submission*
 | [`AI_RAG_AND_SAFETY.md`](AI_RAG_AND_SAFETY.md) | How AI and RAG are used, the exact boundary between what Claude decides and what the application decides, the dietary/allergy/religious safety policy, and an honestly-documented RAG retrieval limitation. |
 | [`COMMUNICATIONS_AND_HUMAN_APPROVAL.md`](COMMUNICATIONS_AND_HUMAN_APPROVAL.md) | The notification state machine, Gmail/WhatsApp channels, the Communications Workspace, and the real Gmail end-to-end verification. |
 | [`ORDER_JOURNEY_AND_DEMO.md`](ORDER_JOURNEY_AND_DEMO.md) | The order-status communication journey, idempotency design, and the recommended demonstration script. |
-| [`TESTING_AND_VALIDATION.md`](TESTING_AND_VALIDATION.md) | The 242/242 automated test suite, the separate live-integration validation, and known non-blocking limitations. |
+| [`TESTING_AND_VALIDATION.md`](TESTING_AND_VALIDATION.md) | The 470/470 automated test suite, the separate manual/live end-to-end validation, and known non-blocking limitations. |
 
 ## Historical / Development Record
 
