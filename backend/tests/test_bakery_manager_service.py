@@ -179,6 +179,51 @@ def test_claude_failure_falls_back_to_a_clean_plan_not_a_crash():
     assert plan["proposedActions"] == []
 
 
+def test_preview_claude_call_uses_a_longer_timeout_than_the_shared_default():
+    # Real production failure this locks in the fix for: this prompt asks
+    # for up to 1500 tokens of structured JSON over the full live order
+    # lists -- the largest _claude() call in the app -- and was observed
+    # timing out at the 12.0s default every other caller keeps (see
+    # test_agent_service.test_claude_default_timeout_and_retries_are_
+    # exactly_unchanged). max_retries stays at the shared default (1).
+    with (
+        patch.object(bms, "record_event"),
+        patch.object(bms.briefing_service, "get_daily_briefing", return_value=_FAKE_BRIEFING),
+        patch.object(bms.order_service, "list_orders", return_value={"items": []}),
+        patch.object(bms.rag_service, "retrieve", return_value=[]),
+        patch.object(bms.agent_service, "is_configured", return_value=True),
+        patch.object(bms.agent_service, "_claude", return_value=_claude_plan_json()) as mock_claude,
+    ):
+        bms.get_preview_plan(_ADMIN_ID)
+
+    assert mock_claude.call_args.kwargs["timeout"] == 30.0
+    assert "max_retries" not in mock_claude.call_args.kwargs  # inherits the shared default (1), not widened
+
+
+def test_claude_timeout_still_surfaces_the_deterministic_pickup_date_exceptions():
+    # The exact production failure mode: Claude times out, but the
+    # deterministic exception list (never dependent on Claude succeeding)
+    # must still reach the manager -- proven here with anthropic's own
+    # timeout exception type, not a generic one.
+    import anthropic
+
+    with (
+        patch.object(bms, "record_event") as mock_audit,
+        patch.object(bms.briefing_service, "get_daily_briefing", return_value=_FAKE_BRIEFING),
+        patch.object(bms.order_service, "list_orders", side_effect=lambda status=None, page_size=100: {
+            "items": [_ORDER_NO_PICKUP] if status == "confirmed" else []
+        }),
+        patch.object(bms.rag_service, "retrieve", return_value=[]),
+        patch.object(bms.agent_service, "is_configured", return_value=True),
+        patch.object(bms.agent_service, "_claude", side_effect=anthropic.APITimeoutError(request=None)),
+    ):
+        plan = bms.get_preview_plan(_ADMIN_ID)
+
+    assert plan["proposedActions"] == []
+    assert any(e["type"] == "missing_pickup_date" and e["orderId"] == "order-3" for e in plan["exceptions"])
+    assert mock_audit.call_args.kwargs["after"]["reason"] == "ai_call_failed"
+
+
 # --- AI BOUNDARY ---------------------------------------------------------
 
 

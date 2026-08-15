@@ -339,7 +339,16 @@ def get_preview_plan(admin_id: str) -> dict:
         return plan
 
     try:
-        raw = agent_service._claude(_build_planning_prompt(context), max_tokens=1500)
+        # timeout=30.0 (vs. every other _claude() caller's 12.0 default):
+        # this prompt asks for up to 1500 tokens of structured JSON over
+        # today's full confirmed/in_progress/ready order lists -- the
+        # largest single Claude call in the app -- and was observed timing
+        # out at the shared 12s/1-retry default in production (see
+        # agent_service._claude's own docstring note). max_retries stays
+        # at the shared default (1) -- widening the timeout, not adding
+        # retries, is the targeted fix for a slow-but-eventually-completes
+        # call, not a transient/flaky one.
+        raw = agent_service._claude(_build_planning_prompt(context), max_tokens=1500, timeout=30.0)
         parsed = agent_service._parse_json_response(raw)
     except Exception:
         logger.exception("AI Bakery Manager planning call failed")

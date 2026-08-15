@@ -2043,6 +2043,25 @@ def test_claude_client_uses_a_bounded_timeout_and_fewer_retries_than_the_sdk_def
     assert kwargs["max_retries"] <= 1
 
 
+def test_claude_default_timeout_and_retries_are_exactly_unchanged():
+    # bakery_manager_service.py now overrides timeout per call (see its own
+    # test) -- this locks in that every OTHER _claude() caller (chat, RAG
+    # answers, morning briefing, etc.) keeps getting the exact same
+    # 12.0s/1-retry budget as before that override was added.
+    with (
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+    ):
+        mock_anthropic_cls.return_value.messages.create.return_value = _fake_claude_json_response(
+            intent="OTHER", body="..."
+        )
+        agent_service._claude("a prompt")
+
+    _args, kwargs = mock_anthropic_cls.call_args
+    assert kwargs["timeout"] == 12.0
+    assert kwargs["max_retries"] == 1
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

@@ -95,7 +95,7 @@ def is_configured() -> bool:
     return bool(settings.anthropic_api_key)
 
 
-def _claude(prompt: str, max_tokens: int = 700) -> str:
+def _claude(prompt: str, max_tokens: int = 700, *, timeout: float = 12.0, max_retries: int = 1) -> str:
     # timeout/max_retries: the SDK's own defaults are a 600s read timeout
     # with 2 retries (confirmed via introspection, not assumed) -- a slow
     # or transiently-erroring call could legitimately hang for minutes
@@ -116,7 +116,17 @@ def _claude(prompt: str, max_tokens: int = 700) -> str:
     # of the request. The genuinely obvious-order-intent case that
     # prompted this bug (see _looks_like_obvious_new_order above) now
     # skips this call entirely rather than depending on it being fast.
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=12.0, max_retries=1)
+    #
+    # timeout/max_retries are overridable per call (defaults above stay
+    # exactly what every existing caller already gets) because one caller
+    # -- bakery_manager_service's planning prompt -- is a structurally
+    # bigger ask than any of these: max_tokens=1500 of structured JSON
+    # over ~50 live orders, not a short prose answer. That call was
+    # observed timing out in production at the 12s/1-retry budget tuned
+    # for this function's other, much smaller callers (real traceback:
+    # anthropic.APITimeoutError after httpx.ReadTimeout) -- see that
+    # module's own call site for the override it passes.
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=timeout, max_retries=max_retries)
     # Extended thinking is on by default for claude-sonnet-5 and counts
     # against max_tokens — for straightforward "synthesize this
     # structured data into a paragraph" tasks it added latency/cost with
