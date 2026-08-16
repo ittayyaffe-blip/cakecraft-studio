@@ -65,10 +65,43 @@ function daysUntil(isoDate) {
 
 let _templateCategory = null;
 
+// Bug fix (URGENT Phase 2 regression): Monday-blocking and the native
+// 9:00-18:00 time range were both already correctly disabling Submit --
+// the actual defect was that NOTHING on the page ever showed the
+// customer why. Submit going straight from enabled to a silent disabled
+// grey button, with every field visibly "filled in", was indistinguishable
+// from a broken button. Root cause traced by inspecting the exact live
+// deployed JS: refreshPickupValidity() called dateInput.setCustomValidity(...)
+// correctly, but that message was never surfaced anywhere -- the Submit
+// button is disabled outright (not merely present-but-failing), so the
+// browser's own native validation tooltip, which only appears on a real
+// submit attempt, never had a chance to fire either. Fix: surface
+// validationMessage (the browser's own text -- covers Monday, out-of-
+// hours, and "required" alike, not just the one custom case) in a real,
+// visible element the moment either pickup field has a value the
+// customer entered. Blocking behavior itself is completely unchanged.
+function refreshPickupErrorMessage() {
+  const dateInput = document.getElementById("pickupDate");
+  const timeInput = document.getElementById("pickupTime");
+  const errorEl = document.getElementById("pickupDateTimeError");
+  if (!dateInput || !timeInput || !errorEl) return;
+
+  // Only once the customer has actually entered something -- an empty,
+  // untouched field is "not yet answered", not an error to flag.
+  const invalidField = [dateInput, timeInput].find((el) => el.value && !el.checkValidity());
+  if (invalidField) {
+    errorEl.textContent = invalidField.validationMessage;
+    errorEl.hidden = false;
+  } else {
+    errorEl.hidden = true;
+  }
+}
+
 function initPickupFields() {
   const dateInput = document.getElementById("pickupDate");
+  const timeInput = document.getElementById("pickupTime");
   const warningEl = document.getElementById("pickupRushWarning");
-  if (!dateInput) return;
+  if (!dateInput || !timeInput) return;
 
   dateInput.min = todayLocalIsoDate();
 
@@ -79,6 +112,7 @@ function initPickupFields() {
       dateInput.setCustomValidity("");
     }
     refreshRushWarning();
+    refreshPickupErrorMessage();
   }
 
   function refreshRushWarning() {
@@ -101,6 +135,11 @@ function initPickupFields() {
 
   dateInput.addEventListener("input", refreshPickupValidity);
   dateInput.addEventListener("change", refreshPickupValidity);
+  // The time field has no custom validity of its own (native min/max
+  // handle 9:00-18:00 already) but still needs the same visible-error
+  // treatment -- same bug, same fix, the other field.
+  timeInput.addEventListener("input", refreshPickupErrorMessage);
+  timeInput.addEventListener("change", refreshPickupErrorMessage);
 }
 
 async function loadTemplateCategoryForRushWarning(templateId) {
