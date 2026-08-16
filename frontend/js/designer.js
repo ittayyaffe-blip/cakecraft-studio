@@ -245,6 +245,24 @@ function handleOptionChange(event) {
     (item) => item.id === input.value
   );
 
+  // Serving Guide UX fix: guest count is authoritative over manual size
+  // clicks too, not just the initial recommendation -- a click that
+  // conflicts with (or happens during) a stated guest count is corrected
+  // back rather than left to create a mismatched size/guest-count pair.
+  // Reuses the same getRecommendedBand/selectSizeRadioByName helpers as
+  // refreshGuestCountRecommendation -- no second threshold table.
+  if (group.key === "cake_sizes" && designerState.guestCount) {
+    const recommended = getRecommendedBand(designerState.guestCount);
+    if (recommended && recommended.band === "CUSTOM_EVENT") {
+      clearSizeSelection();
+      return;
+    }
+    if (recommended && designerState.cakeSize?.name !== recommended.sizeName) {
+      selectSizeRadioByName(recommended.sizeName);
+      return;
+    }
+  }
+
   refreshPricing();
   refreshSummary();
   refreshValidation();
@@ -276,12 +294,40 @@ function selectSizeRadioByName(sizeName) {
   radio.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+// Serving Guide UX fix: the inverse of selectSizeRadioByName -- unchecks
+// whatever cake_size radio is currently checked and clears
+// designerState.cakeSize. Programmatic uncheck doesn't fire a "change"
+// event on its own, so this refreshes the dependent panels directly
+// (mirrors handleOptionChange's own refresh calls) instead of relying on
+// delegation. No-ops if nothing is selected.
+function clearSizeSelection() {
+  const container = document.getElementById("designerOptionsContainer");
+  const checked = container && container.querySelector('input[name="cake_size"]:checked');
+  if (checked) checked.checked = false;
+
+  if (designerState.cakeSize === null) return;
+  designerState.cakeSize = null;
+  refreshPricing();
+  refreshSummary();
+  refreshValidation();
+}
+
 function refreshGuestCountRecommendation() {
   const recommendationEl = document.getElementById("guestCountRecommendation");
   if (!recommendationEl) return;
 
   const recommended = designerState.guestCount ? getRecommendedBand(designerState.guestCount) : null;
-  if (!recommended || recommended.band === "CUSTOM_EVENT") {
+
+  // 76+: no standard size is ever correct, so any stale selection (e.g.
+  // "Small" auto-picked while typing "1" of "100") must be cleared, not
+  // just hidden from the recommendation hint.
+  if (recommended && recommended.band === "CUSTOM_EVENT") {
+    recommendationEl.hidden = true;
+    clearSizeSelection();
+    return;
+  }
+
+  if (!recommended) {
     recommendationEl.hidden = true;
     return;
   }
