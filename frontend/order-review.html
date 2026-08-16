@@ -79,17 +79,30 @@
         </div>
 
         <div id="reviewDetails">
-          <div class="summary-panel">
-            <p class="section-subtitle">Size: <span id="reviewCakeSize"></span></p>
-            <p class="section-subtitle">Flavor: <span id="reviewFlavor"></span></p>
-            <p class="section-subtitle">Filling: <span id="reviewFilling"></span></p>
-            <p class="section-subtitle">Frosting: <span id="reviewFrosting"></span></p>
-            <p class="section-subtitle">Serving range: <span id="reviewServingRange"></span></p>
+          <p class="section-subtitle">Guests: <span id="reviewGuestCount"></span></p>
+
+          <div id="reviewStandardDetails">
+            <div class="summary-panel">
+              <p class="section-subtitle">Size: <span id="reviewCakeSize"></span></p>
+              <p class="section-subtitle">Flavor: <span id="reviewFlavor"></span></p>
+              <p class="section-subtitle">Filling: <span id="reviewFilling"></span></p>
+              <p class="section-subtitle">Frosting: <span id="reviewFrosting"></span></p>
+              <p class="section-subtitle">Serving range: <span id="reviewServingRange"></span></p>
+            </div>
+
+            <p class="section-subtitle craft-message">Every cake is handcrafted to your exact specifications.</p>
+
+            <p class="section-subtitle price-display">Total price: <span id="reviewPrice"></span></p>
           </div>
 
-          <p class="section-subtitle craft-message">Every cake is handcrafted to your exact specifications.</p>
-
-          <p class="section-subtitle price-display">Total price: <span id="reviewPrice"></span></p>
+          <div id="customEventNotice" class="form-warning" hidden>
+            <p id="customEventMessage"></p>
+            <p>
+              <a href="mailto:mybestcake2002@gmail.com" target="_blank" rel="noopener noreferrer">Email us</a>
+              &middot;
+              <a href="#" id="customEventWhatsAppLink" target="_blank" rel="noopener noreferrer">WhatsApp us</a>
+            </p>
+          </div>
         </div>
 
         <button id="returnToDesignerBtn" type="button" class="btn btn-small">&larr; Return to Designer</button>
@@ -110,7 +123,7 @@
         <p><a href="tel:+972545446601">+972 54 544 6601</a></p>
         <p><a href="#" id="footerWhatsAppLink" target="_blank" rel="noopener noreferrer">WhatsApp us</a></p>
         <p class="site-footer__email">
-          <a href="mailto:mybestcake2002@gmail.com" class="site-footer__email-link">
+          <a href="mailto:mybestcake2002@gmail.com" class="site-footer__email-link" target="_blank" rel="noopener noreferrer">
             <span class="site-footer__email-label"><span aria-hidden="true">&#9993;</span> Email us</span>
             <span class="site-footer__email-address">mybestcake2002@gmail.com</span>
           </a>

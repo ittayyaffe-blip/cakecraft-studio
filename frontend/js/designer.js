@@ -96,6 +96,9 @@ function renderTemplateDetail(template) {
 function createOptionGroup(legendText, groupName, items) {
   const fieldset = document.createElement("fieldset");
   fieldset.className = "option-group";
+  // Lets Custom Event mode hide/show one specific group (Cake Size) by id
+  // -- see refreshValidation()'s cake_sizeOptionGroup lookup below.
+  fieldset.id = `${groupName}OptionGroup`;
   // <legend> can never be repositioned via CSS (browsers anchor it to the
   // fieldset border regardless of margin), so the heading is a styled div
   // instead. aria-label on the fieldset preserves the accessible group name
@@ -134,10 +137,21 @@ function renderDesignerOptions(options) {
 
 // Reads designerState through pricing.js (the only place pricing math is
 // allowed to happen) and writes the result into the DOM. No calculation here.
+// Custom Event UX fix: 76+ guests have no standard dollar figure at all
+// (not $0, not the template base price, not a stale prior standard
+// price) -- the standard price/serving-range block is hidden entirely
+// and replaced with a fixed "Tailored proposal" note.
 function refreshPricing() {
+  const standardBlock = document.getElementById("standardPricingBlock");
+  const customEventNote = document.getElementById("customEventPricingNote");
+  const validation = validateOrder(designerState);
+
+  if (standardBlock) standardBlock.hidden = validation.customEvent;
+  if (customEventNote) customEventNote.hidden = !validation.customEvent;
+  if (validation.customEvent) return;
+
   const priceEl = document.getElementById("currentPrice");
   const servingsEl = document.getElementById("servingRange");
-
   const price = calculateCurrentPrice(designerState);
   const servingRange = getServingRange(designerState);
 
@@ -148,8 +162,22 @@ function refreshPricing() {
 // Reads designerState through summary.js (the only place summary-shaping
 // logic is allowed to happen) and writes the result into the DOM. This is
 // the only function that updates the Order Summary section.
+// Custom Event UX fix: a 76+ guest count is an intentional, permanent
+// state for this session, not a customer who forgot to pick a size --
+// the standard "Size: ..." panel is replaced with a dedicated Guests/
+// Order Type/Pricing panel rather than ever showing "Size: Not selected".
 function refreshSummary() {
   const summary = buildOrderSummary(designerState);
+  const validation = validateOrder(designerState);
+
+  const standardPanel = document.getElementById("standardSummaryPanel");
+  const customEventPanel = document.getElementById("customEventSummaryPanel");
+  const guestCountEl = document.getElementById("summaryGuestCount");
+
+  if (standardPanel) standardPanel.hidden = validation.customEvent;
+  if (customEventPanel) customEventPanel.hidden = !validation.customEvent;
+  if (guestCountEl) guestCountEl.textContent = designerState.guestCount ?? "";
+  if (validation.customEvent) return;
 
   const nameEl = document.getElementById("summaryTemplateName");
   const sizeEl = document.getElementById("summaryCakeSize");
@@ -176,6 +204,7 @@ function refreshValidation() {
   const startDesigningBtn = document.getElementById("startDesigningBtn");
   const customEventNotice = document.getElementById("customEventNotice");
   const customEventMessageEl = document.getElementById("customEventMessage");
+  const cakeSizeGroup = document.getElementById("cake_sizeOptionGroup");
 
   if (statusEl) {
     statusEl.textContent = validation.customEvent
@@ -201,6 +230,14 @@ function refreshValidation() {
   // notice replaces it as the only next step.
   if (customEventNotice) customEventNotice.hidden = !validation.customEvent;
   if (customEventMessageEl && validation.customEvent) customEventMessageEl.textContent = CUSTOM_EVENT_MESSAGE;
+
+  // Custom Event UX fix: 76+ guests can't be allowed to select (or leave
+  // selected) a standard size at all -- hiding the whole Cake Size group
+  // is the smallest clean way to make that impossible, vs. disabling
+  // every radio individually. clearSizeSelection() (called from
+  // refreshGuestCountRecommendation whenever the band is CUSTOM_EVENT)
+  // already guarantees nothing stays checked underneath.
+  if (cakeSizeGroup) cakeSizeGroup.hidden = validation.customEvent;
 
   if (startDesigningBtn) {
     startDesigningBtn.disabled = !validation.valid;
@@ -299,13 +336,22 @@ function selectSizeRadioByName(sizeName) {
 // designerState.cakeSize. Programmatic uncheck doesn't fire a "change"
 // event on its own, so this refreshes the dependent panels directly
 // (mirrors handleOptionChange's own refresh calls) instead of relying on
-// delegation. No-ops if nothing is selected.
+// delegation.
+//
+// Custom Event flow repair -- root cause of the "$290 shown for 100
+// guests" bug: this used to skip the three refreshes whenever cakeSize
+// was ALREADY null (e.g. a customer typing straight into an untouched
+// guest-count field), on the assumption there was nothing to update.
+// That's no longer true -- refreshPricing/refreshSummary now ALSO have
+// to switch into their Custom Event display (hide the standard price/
+// summary, show "Tailored proposal") purely because the guest count
+// entered Custom Event range, independent of whether a size was ever
+// selected. Always refresh; the DOM writes are cheap and idempotent.
 function clearSizeSelection() {
   const container = document.getElementById("designerOptionsContainer");
   const checked = container && container.querySelector('input[name="cake_size"]:checked');
   if (checked) checked.checked = false;
 
-  if (designerState.cakeSize === null) return;
   designerState.cakeSize = null;
   refreshPricing();
   refreshSummary();

@@ -30,11 +30,16 @@ const CHAT_LANDING_INTRO =
   "Have a question before you order? Ask us about ingredients, allergies, dietary preferences, or special requirements.";
 const CHAT_GENERIC_INTRO = "Have a question? Ask us about ingredients, allergies, dietary preferences, or anything else.";
 
-// Temporary testing number -- the ONE place it lives. Swap this single
-// constant for the real CakeCraft Studio WhatsApp Business number once
-// it's available; nothing else in this file needs to change. Digits
-// only, no "+"/spaces (wa.me's required format).
-const WHATSAPP_NUMBER = "972545446601";
+// The Twilio WhatsApp Sandbox number -- the ONE place it lives. This is
+// a university project's Twilio Sandbox integration, not a real CakeCraft
+// WhatsApp Business number: it's the only WhatsApp destination the
+// backend webhook can actually receive and answer. Do NOT point this at
+// the footer/contact phone (+972 54 544 6601) -- that's a different
+// number for a different purpose (see designer.html's serving-guide era
+// bug report). Swap this single constant if/when a real WhatsApp
+// Business number replaces the Sandbox; nothing else in this file needs
+// to change. Digits only, no "+"/spaces (wa.me's required format).
+const WHATSAPP_NUMBER = "14155238886";
 // The ONE authoritative prefill text -- every customer-facing WhatsApp
 // entry point (landing page card, footer link, hero CTA) calls
 // buildWhatsAppLink() below rather than constructing its own wa.me URL,

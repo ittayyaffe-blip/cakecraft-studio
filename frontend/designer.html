@@ -107,14 +107,13 @@
               <tr><td>21–30</td><td>Large</td></tr>
               <tr><td>31–50</td><td>XL</td></tr>
               <tr><td>51–75</td><td>Event</td></tr>
-              <tr class="serving-guide__row--custom"><td>76+</td><td>Custom Event — tailored proposal</td></tr>
             </tbody>
           </table>
 
           <div id="customEventNotice" class="form-warning" hidden>
             <p id="customEventMessage"></p>
             <p>
-              <a href="mailto:mybestcake2002@gmail.com">Email us</a>
+              <a href="mailto:mybestcake2002@gmail.com" target="_blank" rel="noopener noreferrer">Email us</a>
               &middot;
               <a href="#" id="customEventWhatsAppLink" target="_blank" rel="noopener noreferrer">WhatsApp us</a>
             </p>
@@ -122,16 +121,24 @@
 
           <div id="designerOptionsContainer"></div>
 
-          <p class="section-subtitle price-display">Current price: <span id="currentPrice"></span></p>
-          <p class="section-subtitle">Serving range: <span id="servingRange"></span></p>
+          <div id="standardPricingBlock">
+            <p class="section-subtitle price-display">Current price: <span id="currentPrice"></span></p>
+            <p class="section-subtitle">Serving range: <span id="servingRange"></span></p>
+          </div>
+          <p id="customEventPricingNote" class="section-subtitle price-display" hidden>Price: <strong>Tailored proposal</strong></p>
 
           <h2 class="section-title">Order Summary</h2>
-          <div class="summary-panel">
+          <div class="summary-panel" id="standardSummaryPanel">
             <p class="section-subtitle">Cake: <span id="summaryTemplateName"></span></p>
             <p class="section-subtitle">Size: <span id="summaryCakeSize"></span></p>
             <p class="section-subtitle">Flavor: <span id="summaryFlavor"></span></p>
             <p class="section-subtitle">Filling: <span id="summaryFilling"></span></p>
             <p class="section-subtitle">Frosting: <span id="summaryFrosting"></span></p>
+          </div>
+          <div class="summary-panel" id="customEventSummaryPanel" hidden>
+            <p class="section-subtitle">Guests: <span id="summaryGuestCount"></span></p>
+            <p class="section-subtitle">Order Type: Custom Event</p>
+            <p class="section-subtitle">Pricing: Tailored proposal</p>
           </div>
 
           <h2 class="section-title">Order Status</h2>
@@ -156,7 +163,7 @@
         <p><a href="tel:+972545446601">+972 54 544 6601</a></p>
         <p><a href="#" id="footerWhatsAppLink" target="_blank" rel="noopener noreferrer">WhatsApp us</a></p>
         <p class="site-footer__email">
-          <a href="mailto:mybestcake2002@gmail.com" class="site-footer__email-link">
+          <a href="mailto:mybestcake2002@gmail.com" class="site-footer__email-link" target="_blank" rel="noopener noreferrer">
             <span class="site-footer__email-label"><span aria-hidden="true">&#9993;</span> Email us</span>
             <span class="site-footer__email-address">mybestcake2002@gmail.com</span>
           </a>

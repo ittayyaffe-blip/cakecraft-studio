@@ -176,6 +176,27 @@ def test_create_order_route_rejects_a_past_pickup_with_400_and_never_creates():
     mock_create_order.assert_not_called()
 
 
+def test_create_order_route_rejects_a_custom_event_guest_count_with_400_and_never_creates():
+    # Custom Event Flow Repair, Part 8 item 15 -- mirrors the past-pickup
+    # rejection test above: proves the route itself enforces the 76+ rule
+    # as an HTTPException(400) before create_order is ever called, not
+    # just at the order_service layer (already covered by
+    # test_order_service.py::test_76_guests_is_rejected_not_automatically_priced).
+    # This is what makes the frontend's own Custom Event UI a UX nicety,
+    # not the actual safety boundary -- a direct POST with guest_count=100
+    # is rejected here regardless of what the client sends.
+    custom_event_request = OrderCreateRequest(**{**_REQUEST.model_dump(), "guest_count": 100})
+    with patch.object(orders, "create_order") as mock_create_order:
+        try:
+            orders.create_order_route(custom_event_request)
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 400
+            assert "tailored" in str(exc.detail).lower()
+        else:
+            raise AssertionError("expected an HTTPException(400) for a 76+ guest count")
+    mock_create_order.assert_not_called()
+
+
 def test_create_order_route_rejects_malformed_pickup_date_with_a_clean_422_not_a_stack_trace():
     # Pydantic's own type coercion (date/time fields on OrderCreateRequest)
     # rejects a malformed value before this ever reaches order_service --

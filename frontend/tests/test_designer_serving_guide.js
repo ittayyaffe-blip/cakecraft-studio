@@ -35,9 +35,20 @@ class FakeElement {
     this.value = "";
     this.hidden = false;
     this.disabled = false;
-    this.textContent = "";
+    this._textContent = "";
     this._checked = false;
     this._radioRegistry = null; // set by createElement(), only for <input>
+  }
+
+  // Real DOM coerces textContent to a string on write (designer.js writes
+  // a raw number here for guest count) -- match that instead of letting
+  // assertions accidentally compare a number to a string.
+  get textContent() {
+    return this._textContent;
+  }
+
+  set textContent(val) {
+    this._textContent = val == null ? "" : String(val);
   }
 
   get checked() {
@@ -154,8 +165,13 @@ async function loadPage() {
     customEventNotice: makeEl("div"),
     customEventMessage: makeEl("p"),
     startDesigningBtn: makeEl("button"),
+    standardPricingBlock: makeEl("div"),
+    customEventPricingNote: makeEl("p"),
     currentPrice: makeEl("span"),
     servingRange: makeEl("span"),
+    standardSummaryPanel: makeEl("div"),
+    customEventSummaryPanel: makeEl("div"),
+    summaryGuestCount: makeEl("span"),
     summaryTemplateName: makeEl("span"),
     summaryCakeSize: makeEl("span"),
     summaryFlavor: makeEl("span"),
@@ -166,9 +182,27 @@ async function loadPage() {
   };
   elements.guestCountRecommendation.hidden = true;
   elements.customEventNotice.hidden = true;
+  elements.customEventPricingNote.hidden = true;
+  elements.customEventSummaryPanel.hidden = true;
 
   const documentStub = {
-    getElementById: (id) => elements[id] || null,
+    getElementById: (id) => {
+      if (elements[id]) return elements[id];
+      // designer.js's createOptionGroup dynamically assigns fieldset ids
+      // (e.g. "cake_sizeOptionGroup") once rendered -- walk the rendered
+      // option tree for those rather than pre-registering every possible
+      // group id above.
+      const walk = (el) => {
+        if (!el) return null;
+        if (el.id === id) return el;
+        for (const child of el.children || []) {
+          const found = walk(child);
+          if (found) return found;
+        }
+        return null;
+      };
+      return walk(elements.designerOptionsContainer);
+    },
     createElement: (tag) => {
       const el = new FakeElement(tag);
       if (tag === "input") {
@@ -242,11 +276,20 @@ function expectSelectedSize(elements, sizeId, sizeName) {
   }
 }
 
+// Custom Event flow repair: the standard summary panel (with its
+// "Size: ..." line) is now hidden entirely rather than ever showing
+// "Size: Not selected" -- so "no standard size selected" is asserted via
+// the actual radio state and which summary panel is visible, not via
+// summaryCakeSize's (now stale, since it's never written to in this
+// state) text content.
 function expectNoStandardSizeSelected(elements) {
   const checked = checkedSizeRadio(elements);
   if (checked) throw new Error(`expected no size selected, but ${checked.value} is checked`);
-  if (elements.summaryCakeSize.textContent !== "Not selected") {
-    throw new Error(`expected summary size "Not selected", got "${elements.summaryCakeSize.textContent}"`);
+  if (elements.standardSummaryPanel.hidden !== true) {
+    throw new Error('expected the standard summary panel ("Size: ...") hidden, not shown as "Not selected"');
+  }
+  if (elements.customEventSummaryPanel.hidden !== false) {
+    throw new Error("expected the Custom Event summary panel (Guests/Order Type/Pricing) visible instead");
   }
 }
 
@@ -298,6 +341,8 @@ async function test_07_guest_count_100_clears_selection_and_shows_custom_event()
   setGuestCount(elements, 100);
   expectNoStandardSizeSelected(elements);
   if (elements.customEventNotice.hidden) throw new Error("expected Custom Event notice visible at 100 guests");
+  if (!elements.startDesigningBtn.hidden) throw new Error("expected standard Continue unavailable at 100 guests");
+  if (!elements.startDesigningBtn.disabled) throw new Error("expected standard Continue disabled at 100 guests");
 }
 
 async function test_08_returning_from_100_to_45_selects_xl() {
@@ -309,6 +354,9 @@ async function test_08_returning_from_100_to_45_selects_xl() {
   expectSelectedSize(elements, "xl-id", "XL");
   if (elements.startDesigningBtn.hidden) throw new Error("expected Continue visible again at 45 guests");
   if (elements.startDesigningBtn.disabled) throw new Error("expected Continue enabled again at 45 guests");
+  if (elements.currentPrice.textContent !== "$190.00") {
+    throw new Error(`expected the correct XL price ($190.00) restored, got "${elements.currentPrice.textContent}"`);
+  }
 }
 
 async function test_09_going_from_45_to_100_clears_selection() {
@@ -336,12 +384,24 @@ async function test_11_continue_restored_for_valid_le_75() {
   if (elements.startDesigningBtn.disabled) throw new Error("expected Continue enabled again at 25 guests");
 }
 
-function test_12_serving_guide_contains_all_six_ranges() {
+// Custom Event flow repair: the 76+ row duplicated the explanatory
+// Custom Event box directly underneath it -- the table now stops at
+// Event (51-75) and the box is the only place 76+ is explained.
+function test_12_serving_guide_has_five_rows_and_no_duplicate_76_plus_row() {
   const html = fs.readFileSync(path.join(__dirname, "..", "designer.html"), "utf8");
-  const expected = ["8–12", "13–20", "21–30", "31–50", "51–75", "76+", "Small", "Medium", "Large", "XL", "Event", "Custom Event"];
-  expected.forEach((token) => {
-    if (!html.includes(token)) throw new Error(`serving guide missing "${token}"`);
+  const tableMatch = html.match(/<table class="serving-guide">[\s\S]*?<\/table>/);
+  if (!tableMatch) throw new Error("serving-guide table not found");
+  const table = tableMatch[0];
+
+  ["8–12", "13–20", "21–30", "31–50", "51–75", "Small", "Medium", "Large", "XL", "Event"].forEach((token) => {
+    if (!table.includes(token)) throw new Error(`serving guide missing "${token}"`);
   });
+  if (table.includes("76+")) throw new Error("REGRESSION: serving guide still contains the duplicated 76+ row");
+  if ((table.match(/<tr/g) || []).length !== 5) throw new Error("expected exactly 5 rows (Small..Event) in the serving guide");
+
+  // The explanatory box must still exist immediately below, so 76+
+  // remains explained -- just once, not twice.
+  if (!html.includes('id="customEventNotice"')) throw new Error("Custom Event explanatory box missing");
 }
 
 // Bonus: item 5's "manual conflicting selection" rule -- not in the
@@ -359,6 +419,64 @@ async function test_13_manual_conflicting_size_click_snaps_back_to_recommended()
   expectSelectedSize(elements, "xl-id", "XL"); // snapped back, never left on Small
 }
 
+// --- Custom Event flow repair: no automatic price, no size controls ------
+
+async function test_14_guest_count_100_shows_no_automatic_dollar_price() {
+  const { elements } = await loadPage();
+  setGuestCount(elements, 100);
+  // The whole block containing currentPrice is hidden (real `hidden`
+  // conceals whatever text is inside it, same as a real browser) -- that
+  // is what actually keeps the customer from seeing a dollar figure, not
+  // whatever currentPrice.textContent happens to still hold underneath.
+  if (!elements.standardPricingBlock.hidden) throw new Error("REGRESSION: standard price block still visible at 100 guests");
+  if (elements.customEventPricingNote.hidden) throw new Error("expected the Tailored proposal note visible at 100 guests");
+}
+
+async function test_15_guest_count_45_still_shows_the_standard_price() {
+  const { elements } = await loadPage();
+  setGuestCount(elements, 45);
+  if (elements.standardPricingBlock.hidden) throw new Error("expected the standard price block visible at 45 guests");
+  if (!elements.customEventPricingNote.hidden) throw new Error("expected the Tailored proposal note hidden at 45 guests");
+  if (elements.currentPrice.textContent !== "$190.00") {
+    throw new Error(`expected $190.00 (base 40 + XL adjustment 150) at 45 guests, got "${elements.currentPrice.textContent}"`);
+  }
+}
+
+async function test_16_guest_count_100_order_summary_shows_guests_and_order_type_not_size_not_selected() {
+  const { elements } = await loadPage();
+  setGuestCount(elements, 100);
+  if (!elements.standardSummaryPanel.hidden) throw new Error("REGRESSION: standard summary panel (with \"Size: ...\") still visible at 100 guests");
+  if (elements.customEventSummaryPanel.hidden) throw new Error("expected the Custom Event summary panel visible at 100 guests");
+  if (elements.summaryGuestCount.textContent !== "100") {
+    throw new Error(`expected Guests: 100 in the summary, got "${elements.summaryGuestCount.textContent}"`);
+  }
+}
+
+async function test_17_guest_count_100_hides_the_standard_cake_size_controls() {
+  const { elements, sandbox } = await loadPage();
+  setGuestCount(elements, 100);
+  const cakeSizeGroup = sandbox.document.getElementById("cake_sizeOptionGroup");
+  if (!cakeSizeGroup || !cakeSizeGroup.hidden) {
+    throw new Error("expected the Cake Size fieldset hidden at 100 guests -- customer must not be able to pick Medium for a 100-guest event");
+  }
+}
+
+async function test_18_manually_forcing_medium_checked_during_100_guests_cannot_persist() {
+  // Belt-and-suspenders: even if the hidden Cake Size fieldset were
+  // somehow bypassed (devtools, assistive tech), handleOptionChange's own
+  // guest-count-authority guard must still refuse to let a manual click
+  // create/persist a mismatched size for a Custom Event guest count.
+  const { elements } = await loadPage();
+  setGuestCount(elements, 100);
+  expectNoStandardSizeSelected(elements);
+
+  const mediumRadio = elements.designerOptionsContainer.querySelector('input[name="cake_size"][value="medium-id"]');
+  mediumRadio.checked = true;
+  mediumRadio.dispatchEvent(new FakeEvent("change", { bubbles: true }));
+
+  expectNoStandardSizeSelected(elements); // never persisted
+}
+
 async function run() {
   const tests = Object.entries({
     test_01_guest_count_10_selects_small,
@@ -372,8 +490,13 @@ async function run() {
     test_09_going_from_45_to_100_clears_selection,
     test_10_continue_hidden_for_76_plus,
     test_11_continue_restored_for_valid_le_75,
-    test_12_serving_guide_contains_all_six_ranges,
+    test_12_serving_guide_has_five_rows_and_no_duplicate_76_plus_row,
     test_13_manual_conflicting_size_click_snaps_back_to_recommended,
+    test_14_guest_count_100_shows_no_automatic_dollar_price,
+    test_15_guest_count_45_still_shows_the_standard_price,
+    test_16_guest_count_100_order_summary_shows_guests_and_order_type_not_size_not_selected,
+    test_17_guest_count_100_hides_the_standard_cake_size_controls,
+    test_18_manually_forcing_medium_checked_during_100_guests_cannot_persist,
   });
   let failed = 0;
   for (const [name, fn] of tests) {
