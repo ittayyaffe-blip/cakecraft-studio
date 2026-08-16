@@ -185,8 +185,17 @@ def test_create_order_route_rejects_a_custom_event_guest_count_with_400_and_neve
     # This is what makes the frontend's own Custom Event UI a UX nicety,
     # not the actual safety boundary -- a direct POST with guest_count=100
     # is rejected here regardless of what the client sends.
+    # Pickup validity is mocked (matching every other test in this file
+    # that isn't itself testing pickup validation) -- self-caught bug:
+    # without this, _REQUEST's pickup_time (today's wall-clock time,
+    # 60 days out) is only valid when the test happens to run between
+    # 09:00-18:00 UTC; outside that window the route's pickup check fires
+    # first, masking the guest-count rejection this test actually targets.
     custom_event_request = OrderCreateRequest(**{**_REQUEST.model_dump(), "guest_count": 100})
-    with patch.object(orders, "create_order") as mock_create_order:
+    with (
+        patch.object(orders, "create_order") as mock_create_order,
+        patch.object(orders.order_service, "validate_pickup_datetime", return_value=None),
+    ):
         try:
             orders.create_order_route(custom_event_request)
         except Exception as exc:
