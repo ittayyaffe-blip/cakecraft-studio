@@ -924,6 +924,7 @@ h3 {
 }
 
 .form-field input,
+.form-field select,
 .form-field textarea {
   width: 100%;
   padding: 0.9rem 1.1rem;
@@ -937,6 +938,7 @@ h3 {
 }
 
 .form-field input:focus,
+.form-field select:focus,
 .form-field textarea:focus {
   outline: none;
   border-color: var(--color-rose-gold);
@@ -2994,6 +2996,16 @@ h3 {
   padding: var(--space-2) var(--space-3) 0;
   color: var(--color-brown-soft);
   font-size: 0.9rem;
+}
+
+.chat-widget__large-event-notice {
+  margin: var(--space-2) var(--space-3) 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-ivory-dark);
+  border: 1px solid var(--color-gold-light);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  color: #7a5a2e;
 }
 
 .chat-widget__messages {

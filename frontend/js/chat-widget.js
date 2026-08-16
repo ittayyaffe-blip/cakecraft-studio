@@ -240,6 +240,18 @@ function initChatWidget() {
   intro.className = "chat-widget__intro";
   intro.textContent = introText;
 
+  // Final Stabilization: a warm, always-visible heads-up at the top of
+  // every chat -- the deterministic >75 gate in run_order_assistant_turn
+  // (backend) remains the actual enforcement; this is purely so a large-
+  // event customer doesn't have to discover the limit by first typing out
+  // their whole request.
+  const largeEventNotice = document.createElement("p");
+  largeEventNotice.className = "chat-widget__large-event-notice";
+  largeEventNotice.textContent =
+    "Planning a larger celebration? 🎂 For events with more than 75 guests, we'd love to create " +
+    "something especially for you. Please contact our service team directly at +972 54-544-6601 for a " +
+    "tailored cake and pricing proposal.";
+
   const messages = document.createElement("div");
   messages.className = "chat-widget__messages";
 
@@ -259,7 +271,7 @@ function initChatWidget() {
   sendBtn.textContent = "Send";
   composer.append(questionInput, sendBtn);
 
-  panel.append(header, intro, messages, errorEl, composer);
+  panel.append(header, intro, largeEventNotice, messages, errorEl, composer);
 
   // Chat-assisted ordering MVP: once true, composer submissions go to
   // sendOrderMessage (POST /chat/order) instead of sendQuestion (POST

@@ -343,6 +343,55 @@ def test_whatsapp_message_uses_phone_lookup_not_email_lookup():
     assert inbound_arg["channel"] == "whatsapp"
 
 
+# Final Stabilization WhatsApp demo readiness: a real Twilio-Sandbox-shaped
+# payload for the literal question the university demo sends ("What are
+# your pickup hours?"), proving the full chain a real Sandbox webhook POST
+# would exercise -- signature-verified parse -> phone-based customer
+# lookup -> the exact same RAG-grounded draft_reply_to_inbound_message
+# pipeline email already uses (its own grounding correctness is covered
+# in test_agent_service.py; this is the WhatsApp-specific wiring proof).
+def test_whatsapp_pickup_hours_question_reaches_the_grounded_draft_pipeline():
+    mock_supabase, queries = _make_supabase_mock(
+        SimpleNamespace(data=None),  # not a duplicate message id
+        SimpleNamespace(
+            data=[_fake_inbound_row(channel="whatsapp", sender_identifier="+33612345678", body="What are your pickup hours?")]
+        ),
+        SimpleNamespace(data=[]),  # get_recent_conversation: no prior messages
+        SimpleNamespace(
+            data=[
+                _fake_inbound_row(
+                    channel="whatsapp", sender_identifier="+33612345678", body="What are your pickup hours?",
+                    customer_id="cust-1", ai_status="drafted", draft_notification_id="notif-5",
+                )
+            ]
+        ),
+    )
+    parsed = twilio_whatsapp_inbound.parse_webhook_payload(
+        {"From": "whatsapp:+33612345678", "Body": "What are your pickup hours?", "MessageSid": "SMpickup1"}
+    )
+    assert parsed is not None  # a real parse failure would silently no-op the test otherwise
+
+    with (
+        patch.object(inbound_service, "supabase", mock_supabase),
+        patch.object(inbound_service, "customer_service") as mock_customer_service,
+        patch.object(inbound_service, "order_service") as mock_order_service,
+        patch.object(inbound_service, "agent_service") as mock_agent_service,
+    ):
+        mock_customer_service.find_customer_by_phone.return_value = (FAKE_CUSTOMER, False)
+        mock_order_service.find_open_order_for_customer.return_value = (FAKE_ORDER, "matched")
+        mock_agent_service.draft_reply_to_inbound_message.return_value = {
+            "ai_status": "drafted", "notification": {"id": "notif-5"}
+        }
+
+        result = inbound_service.process_inbound_whatsapp(parsed)
+
+    inbound_arg = mock_agent_service.draft_reply_to_inbound_message.call_args.args[0]
+    assert inbound_arg["channel"] == "whatsapp"
+    assert inbound_arg["body"] == "What are your pickup hours?"
+    assert result["ai_status"] == "drafted"
+    assert result["draft_notification_id"] == "notif-5"
+
+
 # --- Step 3B: conversation history + intent/handling wiring ----------------
 
 

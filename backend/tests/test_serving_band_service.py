@@ -13,6 +13,11 @@ from app.services.serving_band_service import (
 )
 
 
+def test_8_guests_is_small():
+    # Final Stabilization boundary sweep: 8 is SMALL's own stated floor.
+    assert compute_serving_band(8) == "SMALL"
+
+
 def test_10_guests_is_small():
     assert compute_serving_band(10) == "SMALL"
 

@@ -206,6 +206,28 @@ function test_rush_warning_does_not_disable_submit() {
   }
 }
 
+// --- I: Final Stabilization -- the pickup time dropdown itself ----------
+// (native type="time" exposed a full 24-hour picker; replaced with a
+// constrained select of the real bakery-hours slots so an out-of-hours
+// value is impossible to choose, not just rejected after the fact.)
+
+function test_pickup_time_dropdown_offers_exactly_the_bakery_hours_in_30_minute_steps() {
+  const html = fs.readFileSync(path.join(__dirname, "..", "customer-information.html"), "utf8");
+  const selectMatch = html.match(/<select id="pickupTime"[\s\S]*?<\/select>/);
+  if (!selectMatch) throw new Error('expected <select id="pickupTime"> -- native type="time" must be gone');
+  const values = [...selectMatch[0].matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]);
+
+  const expected = [""]; // the disabled placeholder
+  for (let h = 9; h <= 18; h++) {
+    expected.push(`${String(h).padStart(2, "0")}:00`);
+    if (h < 18) expected.push(`${String(h).padStart(2, "0")}:30`);
+  }
+  if (JSON.stringify(values) !== JSON.stringify(expected)) {
+    throw new Error(`pickup time options don't match 09:00-18:00 in 30-minute steps.\nGot:      ${JSON.stringify(values)}\nExpected: ${JSON.stringify(expected)}`);
+  }
+  if (!selectMatch[0].includes("required")) throw new Error('pickup time <select> must be required');
+}
+
 function run() {
   const tests = Object.entries({
     test_valid_pickup_enables_submit,
@@ -215,6 +237,7 @@ function run() {
     test_out_of_hours_time_disables_submit_and_shows_a_visible_message,
     test_allergy_unchecked_still_disables_submit,
     test_correcting_an_invalid_date_clears_the_error_and_enables_submit,
+    test_pickup_time_dropdown_offers_exactly_the_bakery_hours_in_30_minute_steps,
     test_rush_warning_does_not_disable_submit,
   });
   let failed = 0;

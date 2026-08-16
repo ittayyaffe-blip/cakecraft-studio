@@ -16,7 +16,7 @@ Standard online ordering — automatic sizing, pricing, and checkout — is avai
 
 A guest count inside a collection's own minimum lead-time window (see Bakery Operations Manual) is still accepted as a rush request, never blocked for that reason alone.
 
-**More than 75 guests is a Custom Event**, not a standard online order. It is never automatically priced and never proceeds through standard checkout/payment — the bakery team creates a tailored cake and pricing proposal directly with the customer (via Email, WhatsApp, or website contact). This applies to every collection, including Wedding: a Wedding cake for more than 75 guests is a Custom Event like any other, not "Large" or any other standard size priced automatically.
+**More than 75 guests is a Custom Event**, not a standard online order. It is never automatically priced and never proceeds through standard checkout/payment — the bakery team creates a tailored cake and pricing proposal directly with the customer. Custom Event escalation is by **phone (+972 54-544-6601) or email (mybestcake2002@gmail.com) only** — the WhatsApp number shown elsewhere on the site is a separate technical/demo integration, not the Custom Event contact channel. This applies to every collection, including Wedding: a Wedding cake for more than 75 guests is a Custom Event like any other, not "Large" or any other standard size priced automatically.
 
 ## What's Included
 Base price includes the standard flavor/filling/frosting combination shown on the template. Flavor, filling, and frosting substitutions within the standard list (see Recipe Guide) do not change the price — all listed options are priced equally.

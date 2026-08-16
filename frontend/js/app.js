@@ -84,13 +84,6 @@ function initWhatsAppLinks() {
   if (footerLink) {
     footerLink.href = buildWhatsAppLink();
   }
-
-  // Servings + Event Pricing: the Designer's Custom Event notice (76+
-  // guests) reuses this exact same link, only present on designer.html.
-  const customEventLink = document.getElementById("customEventWhatsAppLink");
-  if (customEventLink) {
-    customEventLink.href = buildWhatsAppLink();
-  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
