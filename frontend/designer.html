@@ -93,6 +93,21 @@
           </div>
           <p class="section-subtitle">Description coming soon.</p>
 
+          <div class="form-field" id="guestCountField">
+            <label for="guestCount">Number of Guests *</label>
+            <input type="number" id="guestCount" name="guestCount" min="1" step="1" inputmode="numeric">
+            <p id="guestCountRecommendation" class="form-hint" hidden></p>
+          </div>
+
+          <div id="customEventNotice" class="form-warning" hidden>
+            <p id="customEventMessage"></p>
+            <p>
+              <a href="mailto:mybestcake2002@gmail.com">Email us</a>
+              &middot;
+              <a href="#" id="customEventWhatsAppLink" target="_blank" rel="noopener noreferrer">WhatsApp us</a>
+            </p>
+          </div>
+
           <div id="designerOptionsContainer"></div>
 
           <p class="section-subtitle price-display">Current price: <span id="currentPrice"></span></p>

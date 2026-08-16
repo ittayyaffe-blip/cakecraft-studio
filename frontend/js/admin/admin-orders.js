@@ -197,6 +197,13 @@ function renderOrderDetail(order, { justUpdatedNotificationId = null } = {}) {
   appendDetailRow(body, "Email", order.customers ? order.customers.email : "—");
   appendDetailRow(body, "Phone", order.customers ? order.customers.phone : "—");
   appendDetailRow(body, "Cake", order.cake_templates ? order.cake_templates.name : "—");
+  // Servings + Event Pricing: never guessed for an order that predates
+  // this feature -- "Not recorded" is the honest, explicit state, same
+  // posture as Pickup Date's own "Not scheduled yet" above.
+  const guestCount = order.configuration && order.configuration.guestCount;
+  appendDetailRow(body, "Guests", guestCount || "Not recorded");
+  const cakeSize = order.configuration && order.configuration.cakeSize;
+  appendDetailRow(body, "Serving Band", cakeSize && cakeSize.name ? cakeSize.name : "Not recorded");
   appendDetailRow(body, "Total", formatCurrency(order.total_price));
   appendDetailRow(body, "Payment", formatPaymentStatus(order.payment));
   if (order.payment && order.payment.status === "paid") {
@@ -218,9 +225,15 @@ function renderOrderDetail(order, { justUpdatedNotificationId = null } = {}) {
     heading.textContent = "Configuration";
     body.appendChild(heading);
 
-    Object.entries(order.configuration).forEach(([key, option]) => {
-      appendDetailRow(body, key, option && option.name ? option.name : "—");
-    });
+    Object.entries(order.configuration)
+      // guestCount is a plain number (shown above, in its own "Guests"
+      // row), not an {name, ...} option object like the rest of this
+      // loop expects -- excluded here so it doesn't render as a
+      // confusing second "guestCount: —" line.
+      .filter(([key]) => key !== "guestCount")
+      .forEach(([key, option]) => {
+        appendDetailRow(body, key, option && option.name ? option.name : "—");
+      });
   }
 
   body.appendChild(buildStatusUpdateSection(order));

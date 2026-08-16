@@ -1,10 +1,13 @@
 from datetime import date, datetime, time
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class OrderCreateRequest(BaseModel):
     template_id: str
+    # Still required and still sent — see order_service.create_order's own
+    # note on why it's only a fallback once guest_count is present, never
+    # the customer-facing lever for price (Servings + Event Pricing).
     cake_size_id: str
     flavor_id: str
     filling_id: str
@@ -21,6 +24,11 @@ class OrderCreateRequest(BaseModel):
     # existed keep NULL pickup_date/pickup_time — never backfilled.
     pickup_date: date
     pickup_time: time
+    # Servings + Event Pricing: the primary business input driving size
+    # and price (see order_service.create_order). gt=0 gives a clean 422
+    # for zero/negative before this ever reaches the route's own 76+
+    # eligibility check.
+    guest_count: int = Field(gt=0)
 
 
 class OrderCreateResponse(BaseModel):

@@ -194,6 +194,85 @@ def test_rush_warning_gracefully_skipped_for_unknown_template():
     assert result == "Notes."
 
 
+# --- Servings + Event Pricing -----------------------------------------------
+
+_OPTIONS_ALL_SIZES = {
+    **_OPTIONS,
+    "cake_sizes": [
+        {"id": "size-small", "name": "Small", "price_adjustment": 0},
+        {"id": "size-medium", "name": "Medium", "price_adjustment": 50},
+        {"id": "size-large", "name": "Large", "price_adjustment": 100},
+        {"id": "size-xl", "name": "XL", "price_adjustment": 150},
+        {"id": "size-event", "name": "Event", "price_adjustment": 200},
+    ],
+}
+
+
+def test_guest_count_derives_the_correct_band_and_price_for_each_standard_size():
+    # (guest_count, expected size id, expected total_price = base 45 + adjustment)
+    cases = [
+        (10, "size-small", 45.0),
+        (18, "size-medium", 95.0),
+        (25, "size-large", 145.0),
+        (40, "size-xl", 195.0),
+        (60, "size-event", 245.0),
+    ]
+    for guest_count, expected_size_id, expected_price in cases:
+        order_id, mock_supabase = _create(
+            {**_ORDER, "guest_count": guest_count}, options=_OPTIONS_ALL_SIZES
+        )
+        assert order_id == "order-1"
+        payload = mock_supabase.table.return_value.insert.call_args.args[0]
+        assert payload["total_price"] == expected_price
+        assert payload["configuration"]["cakeSize"]["id"] == expected_size_id
+        assert payload["configuration"]["guestCount"] == guest_count
+
+
+def test_guest_count_overrides_a_mismatched_cake_size_id():
+    # The actual regression this feature exists to fix: a cheap/small
+    # cake_size_id paired with a much larger guest_count must never win --
+    # guest_count is authoritative, cake_size_id is just ignored once
+    # it's present.
+    order = {**_ORDER, "cake_size_id": "size-small", "guest_count": 60}
+    order_id, mock_supabase = _create(order, options=_OPTIONS_ALL_SIZES)
+    assert order_id == "order-1"
+    payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert payload["configuration"]["cakeSize"]["id"] == "size-event"
+    assert payload["total_price"] == 245.0
+
+
+def test_76_guests_is_rejected_not_automatically_priced():
+    order = {**_ORDER, "guest_count": 76}
+    try:
+        _create(order, options=_OPTIONS_ALL_SIZES)
+    except ValueError as exc:
+        assert "tailored" in str(exc).lower()
+    else:
+        raise AssertionError("expected a ValueError for a 76-guest order")
+
+
+def test_100_guests_is_rejected_not_automatically_priced():
+    order = {**_ORDER, "guest_count": 100}
+    try:
+        _create(order, options=_OPTIONS_ALL_SIZES)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected a ValueError for a 100-guest order")
+
+
+def test_no_guest_count_falls_back_to_the_original_cake_size_id_behavior():
+    # tools/demo_data_seed.py and any other caller that never passes
+    # guest_count must be completely unaffected -- existing seeded/demo
+    # data stays valid.
+    order = {**_ORDER, "cake_size_id": "size-small"}
+    order_id, mock_supabase = _create(order, options=_OPTIONS_ALL_SIZES)
+    assert order_id == "order-1"
+    payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert payload["configuration"]["cakeSize"]["id"] == "size-small"
+    assert "guestCount" not in payload["configuration"]
+
+
 def run_all() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

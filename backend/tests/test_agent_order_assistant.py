@@ -27,9 +27,15 @@ _TEMPLATES = [
 ]
 _OPTIONS = {
     "cake_sizes": [
-        {"id": "size-1", "name": "Small", "price_adjustment": 0, "servings_min": 8, "servings_max": 10},
-        {"id": "size-2", "name": "Medium", "price_adjustment": 50, "servings_min": 12, "servings_max": 15},
-        {"id": "size-3", "name": "Large", "price_adjustment": 100, "servings_min": 18, "servings_max": 22},
+        # servings_min/max match the Servings + Event Pricing migration's
+        # own authoritative values exactly (20260816090000_add_xl_and_
+        # event_cake_sizes.sql) -- size selection itself is name-based,
+        # not range-based, but these are also read directly for display
+        # text (see agent_service._fast_path_new_order_reply), so a stale
+        # value here would show the customer an inconsistent number.
+        {"id": "size-1", "name": "Small", "price_adjustment": 0, "servings_min": 8, "servings_max": 12},
+        {"id": "size-2", "name": "Medium", "price_adjustment": 50, "servings_min": 13, "servings_max": 20},
+        {"id": "size-3", "name": "Large", "price_adjustment": 100, "servings_min": 21, "servings_max": 30},
     ],
     "flavors": [{"id": "flav-1", "name": "Chocolate"}],
     "fillings": [{"id": "fill-1", "name": "Chocolate Ganache"}],
@@ -154,7 +160,7 @@ def test_missing_fields_are_requested_no_order_created():
     assert result["draft"] == {
         "templateId": None, "cakeSizeId": None, "flavorId": None, "fillingId": None,
         "frostingId": None, "phone": None, "specialRequestNote": None,
-        "pickupDate": None, "pickupTime": None,
+        "pickupDate": None, "pickupTime": None, "guestCount": None,
         "awaitingOrderConfirmation": False,
     }
     assert "size" in result["reply"].lower() or "flavor" in result["reply"].lower()
@@ -247,6 +253,10 @@ def test_confirmed_complete_order_calls_the_existing_order_service():
             # otherwise -- see Bug #2's fix); None is the real, valid,
             # "nothing special noted" value.
             "notes": None,
+            # Servings + Event Pricing: optional in chat -- None here since
+            # _COMPLETE_DRAFT never stated one, same "not yet known"
+            # contract as pickup_date/pickup_time below.
+            "guest_count": None,
         },
         # Pickup Date + Order Priority, Phase 2: optional in chat -- None
         # here since _COMPLETE_DRAFT never stated one, same "not yet
@@ -259,7 +269,7 @@ def test_confirmed_complete_order_calls_the_existing_order_service():
     assert result["draft"] == {
         "templateId": None, "cakeSizeId": None, "flavorId": None, "fillingId": None,
         "frostingId": None, "phone": None, "specialRequestNote": None,
-        "pickupDate": None, "pickupTime": None,
+        "pickupDate": None, "pickupTime": None, "guestCount": None,
         "awaitingOrderConfirmation": False,
     }
 
@@ -377,9 +387,12 @@ def test_extract_guest_count_handles_real_phrasing_variants():
 
 
 def test_size_for_guest_count_maps_to_the_real_catalog_range():
-    assert agent_service._size_for_guest_count(20, _OPTIONS["cake_sizes"]) == _LARGE_SIZE_ID
-    assert agent_service._size_for_guest_count(9, _OPTIONS["cake_sizes"]) == "size-1"
-    assert agent_service._size_for_guest_count(1000, _OPTIONS["cake_sizes"]) is None  # no guessing the closest one
+    # Servings + Event Pricing's own band table (SMALL<=12, MEDIUM<=20,
+    # LARGE<=30, ...), not the old servings_min/max range lookup.
+    assert agent_service._size_for_guest_count(9, _OPTIONS["cake_sizes"]) == "size-1"  # SMALL
+    assert agent_service._size_for_guest_count(20, _OPTIONS["cake_sizes"]) == "size-2"  # MEDIUM
+    assert agent_service._size_for_guest_count(25, _OPTIONS["cake_sizes"]) == _LARGE_SIZE_ID  # LARGE
+    assert agent_service._size_for_guest_count(1000, _OPTIONS["cake_sizes"]) is None  # CUSTOM_EVENT -- no guessing
 
 
 def test_trigger_context_seeds_the_correct_size_on_the_first_turn_only():
@@ -389,7 +402,8 @@ def test_trigger_context_seeds_the_correct_size_on_the_first_turn_only():
         {"reply": "Great choice! What flavor, filling, frosting, and phone number?"},
         trigger_context="I would like to order a birthday cake for 20 nice people",
     )
-    assert result["draft"]["cakeSizeId"] == _LARGE_SIZE_ID
+    assert result["draft"]["cakeSizeId"] == "size-2"  # MEDIUM, per the new band table
+    assert result["draft"]["guestCount"] == 20
 
 
 def test_trigger_context_is_ignored_once_the_draft_already_has_something():
@@ -421,7 +435,7 @@ def test_first_turn_with_message_equal_to_trigger_context_seeds_size_and_creates
         {"reply": "Perfect -- let's build your birthday cake. Which design would you like?"},
         trigger_context=trigger,
     )
-    assert result["draft"]["cakeSizeId"] == _LARGE_SIZE_ID
+    assert result["draft"]["cakeSizeId"] == "size-2"  # MEDIUM, per the new band table
     assert result["order_created"] is False
     assert result["order_id"] is None
     mock_create_order.assert_not_called()
@@ -562,7 +576,7 @@ def test_failure_path_preserves_a_non_empty_incoming_draft():
     assert result["reply"]
     assert result["order_created"] is False
     assert result["draft"] == {
-        **partial_draft, "specialRequestNote": None, "pickupDate": None, "pickupTime": None,
+        **partial_draft, "specialRequestNote": None, "pickupDate": None, "pickupTime": None, "guestCount": None,
         "awaitingOrderConfirmation": False,
     }  # nothing lost
     mock_create_order.assert_not_called()
@@ -776,8 +790,11 @@ def test_local_phone_format_normalized_by_claude_passes_through_to_create_order(
     # (matching the bug report's own observation that this part already
     # worked correctly in production); Python trusts whatever string Claude
     # returns for phone verbatim, unchanged by this fix. The message also
-    # restates "20 people", which independently reinforces (not regresses)
-    # the already-locked Large size.
+    # restates "20 people" -- under Servings + Event Pricing's own band
+    # table this correctly UPDATES the size to Medium (20 guests is no
+    # longer Large's range), not a regression: guest count restated in a
+    # real message is always authoritative, by design (see
+    # run_order_assistant_turn's own note on why).
     draft = {**_REPORTED_BUG_DRAFT, "phone": None}
     result, mock_create_order, _, _sb = _run(
         "Yep, for 20 people and my phone number is 0545446601",
@@ -786,7 +803,8 @@ def test_local_phone_format_normalized_by_claude_passes_through_to_create_order(
     )
     assert result["order_created"] is True
     assert mock_create_order.call_args.args[0]["customer_phone"] == "+972545446601"
-    assert mock_create_order.call_args.args[0]["cake_size_id"] == _LARGE_SIZE_ID  # never regressed to Medium
+    assert mock_create_order.call_args.args[0]["cake_size_id"] == "size-2"  # Medium, per the restated guest count
+    assert mock_create_order.call_args.args[0]["guest_count"] == 20
 
 
 def test_full_valid_confirmed_payload_reaches_create_order_exactly_once():
@@ -808,6 +826,7 @@ def test_full_valid_confirmed_payload_reaches_create_order_exactly_once():
             "customer_phone": "+972545446601",
             "customer_email": "jane@example.com",
             "notes": None,
+            "guest_count": None,
         },
         pickup_date=None,
         pickup_time=None,
@@ -864,7 +883,7 @@ def test_failed_order_creation_preserves_the_full_reported_draft_untouched():
     )
     assert result["order_created"] is False
     assert result["draft"] == {
-        **_REPORTED_BUG_DRAFT, "specialRequestNote": None, "pickupDate": None, "pickupTime": None,
+        **_REPORTED_BUG_DRAFT, "specialRequestNote": None, "pickupDate": None, "pickupTime": None, "guestCount": None,
         "awaitingOrderConfirmation": False,
     }
     mock_create_order.assert_called_once()
@@ -1097,7 +1116,7 @@ def test_pending_order_reply_recaps_the_real_cake_selections():
     )
     assert result["order_created"] is True
     assert "Classic Vanilla" in result["reply"]
-    assert "Medium — serves 12-15" in result["reply"]
+    assert "Medium — serves 13-20" in result["reply"]  # matches the Servings + Event Pricing migration's own range
     assert "Chocolate" in result["reply"]  # flavor
     assert "Buttercream" in result["reply"]  # frosting
 
@@ -1257,6 +1276,60 @@ def test_confirmed_order_with_rush_pickup_gets_the_warning_appended_to_notes():
     assert result["order_created"] is True
     notes = mock_create_order.call_args.args[0]["notes"]
     assert notes is not None and "rush" in notes.lower()
+
+
+# --- Servings + Event Pricing: 76+ never reaches Claude/order creation -----
+
+
+def test_60_person_request_remains_standard_ordering():
+    # "Event" band (51-75) -- Chat continues normally, size auto-fills.
+    result, mock_create_order, _, _sb = _run(
+        "I need a wedding cake for 60 people",
+        None,
+        {"templateId": "tpl-1", "reply": "Wonderful — a 60-guest event. What flavor would you like?"},
+    )
+    assert result["draft"]["guestCount"] == 60
+    mock_create_order.assert_not_called()  # not confirmed yet -- just proves it wasn't blocked
+
+
+def test_100_person_request_produces_custom_event_guidance_no_order_no_claude_call():
+    result, mock_create_order, _, _sb = _run(
+        "I need a wedding cake for 100 people",
+        None,
+        {"reply": "This should never be read -- Claude must not even be called."},
+    )
+    assert "75 guests" in result["reply"]
+    assert "tailored" in result["reply"].lower()
+    assert result["order_created"] is False
+    assert result["order_id"] is None
+    mock_create_order.assert_not_called()
+    # Draft is left completely untouched -- same posture as the allergy gate.
+    assert result["draft"]["guestCount"] is None
+
+
+def test_76_person_request_via_trigger_context_also_gets_custom_event_guidance():
+    trigger = "I need a cake for 76 people please"
+    result, mock_create_order, _, _sb = _run(
+        trigger, None, {"reply": "should not be read"}, trigger_context=trigger,
+    )
+    assert "tailored" in result["reply"].lower()
+    assert result["order_created"] is False
+    mock_create_order.assert_not_called()
+
+
+def test_claude_never_gets_called_for_a_76_plus_request():
+    # Direct proof, not just an outcome check: the Claude call itself
+    # never happens for an over-threshold request.
+    with (
+        patch.object(agent_service.settings, "anthropic_api_key", "fake-key-for-test"),
+        patch.object(agent_service.template_service, "get_active_templates", return_value=_TEMPLATES),
+        patch.object(agent_service.designer_service, "get_designer_options", return_value=_OPTIONS),
+        patch.object(agent_service.anthropic, "Anthropic") as mock_anthropic_cls,
+        patch.object(agent_service, "supabase") as mock_supabase,
+    ):
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = _mock_insert_result()
+        agent_service.run_order_assistant_turn("a cake for 200 guests", None, _CUSTOMER)
+    mock_anthropic_cls.return_value.messages.create.assert_not_called()
 
 
 def run_all() -> None:

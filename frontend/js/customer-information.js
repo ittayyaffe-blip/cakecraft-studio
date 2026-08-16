@@ -36,6 +36,10 @@ function getOrderContextFromUrl() {
     flavorId: params.get("flavor"),
     fillingId: params.get("filling"),
     frostingId: params.get("frosting"),
+    // Servings + Event Pricing: forwarded unchanged all the way from the
+    // Designer's guest-count field via order-review.html's own generic
+    // query-string passthrough -- see designer.js's own note.
+    guestCount: params.get("guestCount"),
   };
 }
 
@@ -198,7 +202,8 @@ function initSubmitButton() {
       !context.cakeSizeId ||
       !context.flavorId ||
       !context.fillingId ||
-      !context.frostingId
+      !context.frostingId ||
+      !context.guestCount
     ) {
       renderSubmitError("Your order details are missing. Please start again from the Designer.");
       return;
@@ -210,6 +215,7 @@ function initSubmitButton() {
       flavor_id: context.flavorId,
       filling_id: context.fillingId,
       frosting_id: context.frostingId,
+      guest_count: parseInt(context.guestCount, 10),
       customer_name: document.getElementById("customerName").value,
       customer_phone: document.getElementById("customerPhone").value,
       customer_email: document.getElementById("customerEmail").value,

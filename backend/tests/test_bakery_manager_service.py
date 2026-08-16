@@ -223,6 +223,25 @@ def test_planning_prompt_only_lists_eligible_confirmed_orders_not_the_full_backl
     assert _ORDER_NO_PICKUP["id"] not in prompt
 
 
+def test_order_summary_line_shows_guest_count_as_context_when_available():
+    # Servings + Event Pricing: purely informational -- never read by
+    # anything that decides safety/eligibility.
+    order_with_guests = {
+        **_ORDER_PICKUP_SOON,
+        "configuration": {"guestCount": 60, "cakeSize": {"name": "Event"}},
+    }
+    line = bms._order_summary_line(order_with_guests)
+    assert "guests=60" in line
+    assert "Event" in line
+
+
+def test_order_summary_line_omits_guest_count_when_not_recorded():
+    # Real orders may not have it (historical/no-guest_count callers) --
+    # never invented, matching Back Office's own "Not recorded" posture.
+    line = bms._order_summary_line(_ORDER_PICKUP_SOON)
+    assert "guests=" not in line
+
+
 def test_planning_prompt_renders_only_the_precomputed_priority_candidates():
     # Bounding itself now happens upstream in _priority_flagged_candidates
     # (see its own dedicated tests below) -- _build_planning_prompt just

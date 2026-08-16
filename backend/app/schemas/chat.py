@@ -55,6 +55,16 @@ class ChatOrderDraft(BaseModel):
     # proposed them, same posture as every other extracted field here.
     pickupDate: str | None = None
     pickupTime: str | None = None
+    # Servings + Event Pricing: the primary business input, same
+    # deterministic extraction/authority as the Website (see
+    # agent_service._extract_guest_count/_size_for_guest_count) --
+    # optional here too, never a hard requirement to confirm (matches
+    # pickupDate/pickupTime's own precedent above, for the same reason:
+    # avoids turning this into a new hard gate on the existing,
+    # heavily-tested confirmation flow). A stated count above 75 is
+    # handled separately, before Claude is ever called -- see
+    # run_order_assistant_turn's own note -- and never reaches this field.
+    guestCount: int | None = None
     # Free text, e.g. "ready by tomorrow?" -- never required, never id-
     # validated, just carried through to the created order's `notes`
     # field (see agent_service._order_assistant_prompt's own note on

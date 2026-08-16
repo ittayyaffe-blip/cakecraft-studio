@@ -24,6 +24,10 @@ const designerState = {
   flavor: null,
   filling: null,
   frosting: null,
+  // Servings + Event Pricing: the primary business input -- a plain
+  // number, not an option object like the others above, since it has no
+  // catalog id of its own.
+  guestCount: null,
 };
 
 function getTemplateIdFromUrl() {
@@ -170,9 +174,15 @@ function refreshValidation() {
   const statusEl = document.getElementById("validationStatus");
   const missingListEl = document.getElementById("validationMissingList");
   const startDesigningBtn = document.getElementById("startDesigningBtn");
+  const customEventNotice = document.getElementById("customEventNotice");
+  const customEventMessageEl = document.getElementById("customEventMessage");
 
   if (statusEl) {
-    statusEl.textContent = validation.valid ? "✅ Ready to order" : "❌ Missing";
+    statusEl.textContent = validation.customEvent
+      ? "✋ Tailored proposal needed"
+      : validation.valid
+        ? "✅ Ready to order"
+        : "❌ Missing";
   }
 
   if (missingListEl) {
@@ -185,8 +195,16 @@ function refreshValidation() {
     });
   }
 
+  // Servings + Event Pricing: 76+ guests must never reach normal
+  // automated checkout, regardless of how complete every other field is
+  // -- the Continue button stays disabled and the tailored-proposal
+  // notice replaces it as the only next step.
+  if (customEventNotice) customEventNotice.hidden = !validation.customEvent;
+  if (customEventMessageEl && validation.customEvent) customEventMessageEl.textContent = CUSTOM_EVENT_MESSAGE;
+
   if (startDesigningBtn) {
     startDesigningBtn.disabled = !validation.valid;
+    startDesigningBtn.hidden = validation.customEvent;
   }
 }
 
@@ -239,18 +257,69 @@ function initDesignerStateTracking() {
   container.addEventListener("change", handleOptionChange);
 }
 
+// Servings + Event Pricing: guest count drives size selection, not the
+// other way around -- this only ever programmatically checks the
+// already-rendered radio matching the recommended band and dispatches a
+// real "change" event, reusing handleOptionChange's own existing
+// delegation (container.addEventListener("change", ...)) rather than
+// duplicating its state-update/refresh logic here. No-ops safely if the
+// catalog hasn't finished loading yet or the named size isn't found.
+function selectSizeRadioByName(sizeName) {
+  if (!designerOptions) return;
+  const match = designerOptions.cake_sizes.find((size) => size.name === sizeName);
+  const container = document.getElementById("designerOptionsContainer");
+  if (!match || !container) return;
+
+  const radio = container.querySelector(`input[name="cake_size"][value="${match.id}"]`);
+  if (!radio || radio.checked) return;
+  radio.checked = true;
+  radio.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function refreshGuestCountRecommendation() {
+  const recommendationEl = document.getElementById("guestCountRecommendation");
+  if (!recommendationEl) return;
+
+  const recommended = designerState.guestCount ? getRecommendedBand(designerState.guestCount) : null;
+  if (!recommended || recommended.band === "CUSTOM_EVENT") {
+    recommendationEl.hidden = true;
+    return;
+  }
+
+  recommendationEl.textContent = `Recommended size: ${recommended.sizeName}`;
+  recommendationEl.hidden = false;
+  selectSizeRadioByName(recommended.sizeName);
+}
+
+function initGuestCountField() {
+  const input = document.getElementById("guestCount");
+  if (!input) return;
+  input.addEventListener("input", () => {
+    const value = parseInt(input.value, 10);
+    designerState.guestCount = Number.isInteger(value) && value > 0 ? value : null;
+    refreshGuestCountRecommendation();
+    refreshValidation();
+  });
+}
+
 function initStartDesigningButton() {
   const button = document.getElementById("startDesigningBtn");
   if (!button) return;
   button.addEventListener("click", () => {
     // The button is disabled by refreshValidation() until designerState is
-    // complete, so every property read here is guaranteed to be populated.
+    // complete (which now also requires a standard, non-custom-event
+    // guestCount), so every property read here is guaranteed to be
+    // populated. guestCount rides along in the URL the exact same way
+    // every other selection already does -- order-review.html forwards
+    // its own full query string on to customer-information.html
+    // unchanged, so no other page needs to know this field exists.
     const params = new URLSearchParams({
       id: designerState.template.id,
       cakeSize: designerState.cakeSize.id,
       flavor: designerState.flavor.id,
       filling: designerState.filling.id,
       frosting: designerState.frosting.id,
+      guestCount: designerState.guestCount,
     });
     window.location.href = `order-review.html?${params.toString()}`;
   });
@@ -260,4 +329,5 @@ document.addEventListener("DOMContentLoaded", () => {
   loadDesigner();
   initDesignerStateTracking();
   initStartDesigningButton();
+  initGuestCountField();
 });

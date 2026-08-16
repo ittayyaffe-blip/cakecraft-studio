@@ -42,6 +42,12 @@ _REQUEST = OrderCreateRequest(
     notes=None,
     pickup_date=_FUTURE_PICKUP.date(),
     pickup_time=_FUTURE_PICKUP.time().replace(microsecond=0),
+    # A standard, unambiguous mid-range guest count (MEDIUM band) -- real,
+    # unmocked serving_band_service.is_standard_ordering_eligible() is a
+    # pure function with no DB dependency, so these route-orchestration
+    # tests don't need to mock it, unlike validate_pickup_datetime/
+    # annotate_notes_with_rush_warning above (both touch the DB).
+    guest_count=15,
 )
 
 _JOINED_ORDER = {

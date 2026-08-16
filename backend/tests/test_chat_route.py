@@ -120,7 +120,7 @@ def test_order_finds_or_creates_the_customer_and_hands_off_with_the_draft():
         {
             "templateId": "tpl-1", "cakeSizeId": None, "flavorId": None, "fillingId": None,
             "frostingId": None, "phone": None, "pickupDate": None, "pickupTime": None,
-            "specialRequestNote": None, "awaitingOrderConfirmation": False,
+            "guestCount": None, "specialRequestNote": None, "awaitingOrderConfirmation": False,
         },
         trigger_context=None,
     )

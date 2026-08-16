@@ -1875,7 +1875,7 @@ def test_obvious_new_order_message_skips_rag_and_claude_entirely():
     mock_claude.assert_not_called()
     assert result["intent"] == "NEW_ORDER_INQUIRY"
     assert "templates.html?collection=Birthday" in result["answer"]
-    assert "Large" in result["answer"]  # 20 guests -> Large, deterministic, not Claude-stated
+    assert "Medium" in result["answer"]  # 20 guests -> Medium under the Servings + Event Pricing band table, deterministic, not Claude-stated
 
 
 def test_fast_path_reply_never_hardcodes_the_occasion_or_size():

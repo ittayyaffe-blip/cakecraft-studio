@@ -61,6 +61,7 @@ from app.services import (
     order_service,
     payment_service,
     rag_service,
+    serving_band_service,
     template_service,
 )
 
@@ -1341,6 +1342,8 @@ def _normalize_order_draft(draft: dict | None) -> dict:
     # turn's own note on why chat stays additive here).
     normalized["pickupDate"] = draft.get("pickupDate") or None
     normalized["pickupTime"] = draft.get("pickupTime") or None
+    # Servings + Event Pricing: same additive, non-gating treatment.
+    normalized["guestCount"] = draft.get("guestCount") or None
     # Deterministic, Python-owned conversational state -- never guessed
     # from Claude's own JSON. True exactly when the PREVIOUS turn ended
     # with every field known and no confirmation yet, which (see the
@@ -1370,11 +1373,23 @@ def _extract_guest_count(text: str) -> int | None:
 
 
 def _size_for_guest_count(count: int, cake_sizes: list[dict]) -> str | None:
-    for size in cake_sizes:
-        low, high = size.get("servings_min"), size.get("servings_max")
-        if low is not None and high is not None and low <= count <= high:
-            return size["id"]
-    return None
+    """Servings + Event Pricing: reuses the exact same shared band table
+    order_service.create_order() and the Website route are built on
+    (serving_band_service) -- not a separate servings_min/max range
+    lookup. Returns None both for a count that doesn't parse to a real
+    positive integer and for CUSTOM_EVENT (76+, no standard size exists)
+    -- callers that need to tell those apart check
+    serving_band_service.is_standard_ordering_eligible() directly (see
+    run_order_assistant_turn's own gate).
+    """
+    try:
+        band = serving_band_service.compute_serving_band(count)
+    except ValueError:
+        return None
+    if band == serving_band_service.CUSTOM_EVENT:
+        return None
+    size_name = serving_band_service.BAND_TO_SIZE_NAME[band]
+    return next((size["id"] for size in cake_sizes if size["name"] == size_name), None)
 
 
 # Bug: a size already deterministically established (from guest count, or
@@ -1474,6 +1489,8 @@ def _format_order_draft(draft: dict, names: dict[str, str]) -> str:
         lines.append(f"  special request noted: {draft['specialRequestNote']}")
     if draft.get("pickupDate") or draft.get("pickupTime"):
         lines.append(f"  desired pickup: {draft.get('pickupDate') or 'date not yet known'} at {draft.get('pickupTime') or 'time not yet known'}")
+    if draft.get("guestCount"):
+        lines.append(f"  guest count: {draft['guestCount']}")
     return "\n".join(lines)
 
 
@@ -1701,6 +1718,7 @@ def run_order_assistant_turn(
     if trigger_context and not any(current.values()):
         guest_count = _extract_guest_count(trigger_context)
         if guest_count is not None:
+            current["guestCount"] = guest_count
             size_id = _size_for_guest_count(guest_count, options["cake_sizes"])
             if size_id:
                 current["cakeSizeId"] = size_id
@@ -1722,6 +1740,34 @@ def run_order_assistant_turn(
         notification = _persist_reply(None, _ALLERGY_ORDER_BLOCKED_MESSAGE)
         return {
             "reply": _ALLERGY_ORDER_BLOCKED_MESSAGE,
+            "draft": current,
+            "order_created": False,
+            "order_id": None,
+            "notification": notification,
+            "ai_status": "drafted",
+        }
+
+    # Servings + Event Pricing: a stated guest count above 75 deterministically
+    # blocks automated ordering on THIS turn, same posture as the allergy
+    # gate immediately above -- checked before Claude is ever called, so
+    # Claude never gets a chance to invent a price or pretend an existing
+    # size covers the event. Draft state is left untouched, same reasoning
+    # as the allergy gate: nothing extracted from this message, no
+    # progress lost, so a customer with a smaller cake already in progress
+    # who mentions an unrelated large number isn't derailed permanently --
+    # and a genuine 76+ statement can simply be revisited once they've
+    # contacted the bakery.
+    stated_guest_count = _extract_guest_count(message)
+    if stated_guest_count is None and trigger_context:
+        # trigger_context is only ever present on the very first ordering
+        # turn (see ChatOrderRequest's own note) -- a customer whose
+        # opening message itself named a 76+ event must be caught here
+        # too, not just on a later turn that happens to restate it.
+        stated_guest_count = _extract_guest_count(trigger_context)
+    if stated_guest_count is not None and not serving_band_service.is_standard_ordering_eligible(stated_guest_count):
+        notification = _persist_reply(None, serving_band_service.CUSTOM_EVENT_MESSAGE)
+        return {
+            "reply": serving_band_service.CUSTOM_EVENT_MESSAGE,
             "draft": current,
             "order_created": False,
             "order_id": None,
@@ -1777,6 +1823,26 @@ def run_order_assistant_turn(
             updated[field] = candidate
         # else: an id that isn't real -- ignored, never trusted, previous value kept.
 
+    # Servings + Event Pricing: guest count is the primary business input
+    # (order_service.create_order's own note) -- recorded whenever THIS
+    # message itself states one, and given priority over a same-message
+    # named-size mention (e.g. "a Large cake for 60 people") so the draft
+    # the customer sees never disagrees with what would actually be
+    # priced/stored (guest_count always wins there too). Deliberately
+    # re-extracted from `message` alone here, NOT reusing the gate's own
+    # `stated_guest_count` above (which also falls back to trigger_context)
+    # -- trigger_context is a one-time, first-turn-only seed (see its own
+    # pre-fill block above); resurrecting it on every later turn would
+    # silently override a size the customer already explicitly chose
+    # since then. 76+ never reaches this far -- the gate above already
+    # returned.
+    this_turn_guest_count = _extract_guest_count(message)
+    if this_turn_guest_count is not None:
+        updated["guestCount"] = this_turn_guest_count
+    guest_count_size = (
+        _size_for_guest_count(this_turn_guest_count, options["cake_sizes"]) if this_turn_guest_count is not None else None
+    )
+
     # Size regression fix (see _explicit_size_change's own note): only
     # ever changes when *this* message itself is explicit evidence of a
     # change. Falls back to Claude's own (still id-validated) candidate
@@ -1784,7 +1850,7 @@ def run_order_assistant_turn(
     # preserves the original "Claude extracts freely, Python validates"
     # flexibility for a first, natural-language size mention that isn't a
     # literal catalog name or guest count (e.g. "the biggest one").
-    size_override = _explicit_size_change(message, options["cake_sizes"])
+    size_override = guest_count_size or _explicit_size_change(message, options["cake_sizes"])
     if size_override:
         updated["cakeSizeId"] = size_override
     elif not updated.get("cakeSizeId"):
@@ -1907,6 +1973,11 @@ def run_order_assistant_turn(
                     # real, valid value (nullable column, same as the
                     # Designer flow's blank-notes case).
                     "notes": notes,
+                    # Servings + Event Pricing: when known, authoritative
+                    # over cake_size_id above -- see order_service.
+                    # create_order's own note. None when never stated,
+                    # falling back to the plain cakeSizeId-only behavior.
+                    "guest_count": updated.get("guestCount"),
                 },
                 pickup_date=updated.get("pickupDate"),
                 pickup_time=updated.get("pickupTime"),

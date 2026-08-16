@@ -189,6 +189,18 @@ def _order_summary_line(order: dict) -> str:
     )
     if order.get("_priority"):
         line += f" priority={order['_priority']}"
+    # Servings + Event Pricing: guest count/serving band shown as extra
+    # operational context, purely informational -- never read by anything
+    # that decides safety/eligibility (that's still entirely
+    # _production_start_eligibility/_revalidate_order_for_action, both
+    # untouched by this). Real orders may not have it (see order_service.
+    # create_order's own note: only present when guest_count was supplied
+    # at creation), so this is conditional, never invented.
+    configuration = order.get("configuration") or {}
+    guest_count = configuration.get("guestCount")
+    if guest_count is not None:
+        size_name = (configuration.get("cakeSize") or {}).get("name", "?")
+        line += f" guests={guest_count} ({size_name})"
     return line
 
 

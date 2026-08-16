@@ -12,13 +12,28 @@ const REQUIRED_FIELDS = [
   { key: "frosting", label: "Frosting" },
 ];
 
+// Servings + Event Pricing: guest count is required like every other
+// field above, but a 76+ count is never just "missing" -- it's a
+// distinct, permanent-for-this-session block (customEvent: true), never
+// satisfied by picking a different size, and must never be silently
+// treated as "valid" once a customer types a lower number back in (that
+// part still works normally, since a fresh call to this function always
+// re-derives the outcome fresh from whatever guestCount currently is).
 function validateOrder(designerState) {
   const missing = REQUIRED_FIELDS.filter((field) => !designerState[field.key]).map(
     (field) => field.label
   );
 
+  if (!designerState.guestCount) {
+    missing.push("Number of Guests");
+  }
+
+  const recommended = designerState.guestCount ? getRecommendedBand(designerState.guestCount) : null;
+  const customEvent = recommended ? recommended.band === "CUSTOM_EVENT" : false;
+
   return {
-    valid: missing.length === 0,
+    valid: missing.length === 0 && !customEvent,
     missing,
+    customEvent,
   };
 }

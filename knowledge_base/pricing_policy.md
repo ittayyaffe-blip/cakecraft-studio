@@ -1,7 +1,22 @@
 # Pricing Policy — Maison de Gâteau Paris
 
 ## Base Pricing
-Every cake template has a base price tied to its collection and size, shown at order time. Size selection (Small, Medium, Large) adjusts the base price via a fixed price adjustment per size — larger sizes cost more due to both ingredient volume and additional bake/decoration time.
+Every cake template has a base price tied to its collection and size, shown at order time. Size is determined by the number of guests the customer states, not chosen independently — see Guest Count & Serving Bands below. Five standard sizes exist — Small, Medium, Large, XL, and Event — each adding a fixed price adjustment to the base price: Small +$0, Medium +$50, Large +$100, XL +$150, Event +$200. Larger sizes cost more due to both ingredient volume and additional bake/decoration time.
+
+## Guest Count & Serving Bands
+Standard online ordering — automatic sizing, pricing, and checkout — is available for celebrations of **up to 75 guests**. The guest count a customer enters determines the serving band, and therefore the size and price, automatically:
+
+| Guests | Serving Band |
+|---|---|
+| 8–12 | Small |
+| 13–20 | Medium |
+| 21–30 | Large |
+| 31–50 | XL |
+| 51–75 | Event |
+
+A guest count inside a collection's own minimum lead-time window (see Bakery Operations Manual) is still accepted as a rush request, never blocked for that reason alone.
+
+**More than 75 guests is a Custom Event**, not a standard online order. It is never automatically priced and never proceeds through standard checkout/payment — the bakery team creates a tailored cake and pricing proposal directly with the customer (via Email, WhatsApp, or website contact). This applies to every collection, including Wedding: a Wedding cake for more than 75 guests is a Custom Event like any other, not "Large" or any other standard size priced automatically.
 
 ## What's Included
 Base price includes the standard flavor/filling/frosting combination shown on the template. Flavor, filling, and frosting substitutions within the standard list (see Recipe Guide) do not change the price — all listed options are priced equally.

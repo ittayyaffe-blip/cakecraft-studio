@@ -9,7 +9,7 @@ from app.schemas.order import (
     OrderPaymentResponse,
     OrderPublicView,
 )
-from app.services import inbound_service, notification_service, order_service, payment_service
+from app.services import inbound_service, notification_service, order_service, payment_service, serving_band_service
 from app.services.order_service import create_order
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,14 @@ def create_order_route(order: OrderCreateRequest):
     validation_error = order_service.validate_pickup_datetime(order.pickup_date, order.pickup_time)
     if validation_error:
         raise HTTPException(status_code=400, detail=validation_error)
+
+    # Servings + Event Pricing: a fast, explicit rejection for 76+ guests
+    # before any other work — create_order() independently re-checks this
+    # exact same rule itself (see its own note), so this isn't the only
+    # thing standing between a crafted direct POST and standard automated
+    # checkout, just the clearest/cheapest place to fail first.
+    if not serving_band_service.is_standard_ordering_eligible(order.guest_count):
+        raise HTTPException(status_code=400, detail=serving_band_service.CUSTOM_EVENT_MESSAGE)
 
     notes = order_service.annotate_notes_with_rush_warning(order.template_id, order.notes, order.pickup_date)
 

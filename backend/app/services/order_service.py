@@ -1,6 +1,7 @@
 from datetime import date, datetime, time, timezone
 
 from app.core.database import supabase
+from app.services import serving_band_service
 from app.services.designer_service import get_designer_options
 from app.services.search_utils import sanitize_search_term
 from app.services.template_service import get_template_by_id
@@ -120,6 +121,13 @@ def create_order(
     `created_at` keeps its normal DB-generated `now()` value and
     `pickup_date`/`pickup_time` stay unset, exactly as before this
     function gained these parameters.
+
+    `order["guest_count"]` (Servings + Event Pricing) is a plain dict key,
+    not a keyword-only override like the three above — optional, so
+    tools/demo_data_seed.py's existing calls (which never set it) are
+    unaffected, but every real caller that DOES set it gets it treated as
+    authoritative over `order["cake_size_id"]`; see the two branches
+    below.
     """
     # get_template_by_id() deliberately doesn't filter `active` (the admin
     # catalog view needs inactive templates too, see its own docstring) --
@@ -136,7 +144,33 @@ def create_order(
         return None
 
     options = get_designer_options()
-    cake_size = _find_option(options, "cake_sizes", order["cake_size_id"])
+
+    # Servings + Event Pricing: guest_count, when given, is authoritative
+    # over whatever cake_size_id the caller also sent -- it independently
+    # derives the correct size (and therefore price) from the shared
+    # deterministic band table, exactly like the Website route already
+    # rejects a 76+ guest count before ever reaching this function. This
+    # is what makes "a direct POST can't bypass the rule" actually true:
+    # even a crafted payload pairing a cheap cake_size_id with a much
+    # higher guest_count can never affect the stored price, because
+    # cake_size_id is simply never consulted once guest_count is present.
+    # guest_count is optional here (None falls back to the original
+    # cake_size_id-only behavior) so tools/demo_data_seed.py's existing
+    # calls -- which never pass it -- are completely unaffected.
+    guest_count = order.get("guest_count")
+    if guest_count is not None:
+        band = serving_band_service.compute_serving_band(guest_count)
+        if band == serving_band_service.CUSTOM_EVENT:
+            raise ValueError(serving_band_service.CUSTOM_EVENT_MESSAGE)
+        size_name = serving_band_service.BAND_TO_SIZE_NAME[band]
+        cake_size = next(
+            (s for s in options["cake_sizes"] if s["name"] == size_name), None
+        )
+        if cake_size is None:
+            raise ValueError(f"'{size_name}' is not currently available.")
+    else:
+        cake_size = _find_option(options, "cake_sizes", order["cake_size_id"])
+
     flavor = _find_option(options, "flavors", order["flavor_id"])
     filling = _find_option(options, "fillings", order["filling_id"])
     frosting = _find_option(options, "frostings", order["frosting_id"])
@@ -156,6 +190,8 @@ def create_order(
         "filling": filling,
         "frosting": frosting,
     }
+    if guest_count is not None:
+        configuration["guestCount"] = guest_count
 
     insert_payload = {
         "customer_id": customer_id,
