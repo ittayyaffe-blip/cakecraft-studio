@@ -1,5 +1,7 @@
 # CakeCraft Studio
 
+📄 [Full project summary & write-up](https://claude.ai/code/artifact/9d56328c-fa02-43f6-9918-4e37f46a3ea0) — problem, architecture, every platform in the stack, the RAG/ML model comparison, and the engineering process, in one page.
+
 ## 1. What This Is
 
 CakeCraft Studio ("Maison de Gâteau Paris") is a custom-cake ordering platform built as a final-degree academic project. It demonstrates a layered web application with a real external communication integration (Gmail), an AI/RAG-assisted customer communication layer, and a human-in-the-loop safety architecture in which AI can draft customer communication but can never send it unsupervised.
