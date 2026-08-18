@@ -90,7 +90,13 @@ function isLandingPage() {
   return path === "/" || path.endsWith("/index.html") || path === "";
 }
 
-function getOrderIdFromUrl() {
+// Named distinctly from payment.js's/confirmation.js's own same-purpose
+// helpers -- all three are classic (non-module) scripts sharing one global
+// scope, so an identically-named function here would silently overwrite
+// (or be overwritten by) theirs depending on <script> tag order. This one
+// is chat-widget's own: it reads the *chat* grounding param ("orderId"),
+// unrelated to payment.js's "order" query param contract.
+function getChatOrderIdFromUrl() {
   return new URLSearchParams(window.location.search).get("orderId");
 }
 
@@ -348,7 +354,7 @@ function initChatWidget() {
         name: identity.name,
         email: identity.email,
         question,
-        orderId: getOrderIdFromUrl() || undefined,
+        orderId: getChatOrderIdFromUrl() || undefined,
       });
       thinkingBubble.remove();
       messages.appendChild(buildMessageBubble("assistant", response.answer));
