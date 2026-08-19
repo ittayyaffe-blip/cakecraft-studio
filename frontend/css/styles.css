@@ -393,9 +393,14 @@ h3 {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  /* The cake sits right-of-center in the source photo; bias the crop
-     toward it so it stays in frame on tall/narrow viewports. */
-  object-position: 72% 48%;
+  /* hero-v2's focal content (signage + entrance + queue) runs from
+     roughly 30%-100% of the frame width and 15%-85% of its height, wider
+     than a single edge bias can cover -- 55% 45% keeps the sign and
+     queue in frame on narrow/tall crops (mobile crops width, not height)
+     while landing the vertical crop right at the diners' table line on
+     wide/short crops (desktop crops height, not width) -- verified via
+     each breakpoint's actual object-fit:cover crop math, not eyeballed. */
+  object-position: 55% 45%;
 }
 
 /* Mobile: text spans nearly the full width, so keep a even, moderate
