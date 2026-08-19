@@ -1191,6 +1191,118 @@ def test_allergy_confirmation_is_not_repeated_in_the_success_message():
     assert "food allerg" not in result["reply"].lower()
 
 
+# --- Chat Allergy Negation bug fix -----------------------------------------
+# _ALLERGY_CONFIRMATION_PROMPT above literally asks "confirm you do not
+# have any food allergies" -- so the expected reply, positive or negative,
+# almost always contains "allerg" and used to trip the block regardless of
+# polarity. Two independent behaviors, both deterministic (never Claude's
+# judgment):
+# (1) a clear negative statement (_is_clear_allergy_negation) no longer
+#     triggers _ALLERGY_ORDER_BLOCKED_MESSAGE, on any turn;
+# (2) at the final confirmation step specifically, that same clear
+#     negation also satisfies the confirmation itself and lets the order
+#     proceed -- scoped tightly to was_awaiting_confirmation so a bare
+#     "no" never becomes a global order-confirmation trigger.
+
+
+def test_is_clear_allergy_negation_recognizes_common_negative_phrasings():
+    for message in (
+        "no", "No.", "NONE", "nope",
+        "no food allergies", "No food allergies.",
+        "I have no food allergies",
+        "I don't have any food allergies",
+        "I do not have any allergies",
+        "I wrote that I do not have a food allergies",
+    ):
+        assert agent_service._is_clear_allergy_negation(message) is True, message
+
+
+def test_is_clear_allergy_negation_rejects_positive_or_ambiguous_statements():
+    for message in (
+        "I have a nut allergy, can I still order the chocolate cake?",
+        "I am allergic to milk",
+        "yes, I have allergies",
+        "yes please go ahead, though I do have an egg allergy",
+        "I'm not sure if I have any allergies",
+        "maybe, I think I might be allergic",
+    ):
+        assert agent_service._is_clear_allergy_negation(message) is False, message
+
+
+def test_clear_allergy_negation_no_food_allergies_does_not_trigger_the_block():
+    result, mock_create_order, _, _sb = _run(
+        "no food allergies", None, {"reply": "Great, what would you like to order?"},
+    )
+    assert result["reply"] != agent_service._ALLERGY_ORDER_BLOCKED_MESSAGE
+    mock_create_order.assert_not_called()  # fresh turn, nothing to confirm yet
+
+
+def test_clear_allergy_negation_i_do_not_have_any_allergies_does_not_trigger_the_block():
+    result, mock_create_order, _, _sb = _run(
+        "I do not have any allergies", None, {"reply": "Great, what would you like to order?"},
+    )
+    assert result["reply"] != agent_service._ALLERGY_ORDER_BLOCKED_MESSAGE
+    mock_create_order.assert_not_called()
+
+
+def test_allergy_negation_at_final_confirmation_no_food_allergies_proceeds_normally():
+    # confirmedNow deliberately False -- proves the order proceeds because
+    # of the deterministic allergy_negation_confirms path, not because
+    # Claude happened to agree.
+    awaiting_draft = {**_MEDIUM_CONFIRMATION_DRAFT, "awaitingOrderConfirmation": True}
+    result, mock_create_order, _, _sb = _run(
+        "no food allergies", awaiting_draft, {"confirmedNow": False, "reply": "Sure!"},
+    )
+    assert result["reply"] != agent_service._ALLERGY_ORDER_BLOCKED_MESSAGE
+    assert result["order_created"] is True
+    mock_create_order.assert_called_once()
+
+
+def test_allergy_negation_at_final_confirmation_i_do_not_have_any_allergies_proceeds_normally():
+    awaiting_draft = {**_MEDIUM_CONFIRMATION_DRAFT, "awaitingOrderConfirmation": True}
+    result, mock_create_order, _, _sb = _run(
+        "I do not have any allergies", awaiting_draft, {"confirmedNow": False, "reply": "Sure!"},
+    )
+    assert result["reply"] != agent_service._ALLERGY_ORDER_BLOCKED_MESSAGE
+    assert result["order_created"] is True
+    mock_create_order.assert_called_once()
+
+
+def test_allergy_negation_at_final_confirmation_handles_the_reported_clarification_phrasing():
+    # The exact second reproduction message from the live bug report.
+    awaiting_draft = {**_MEDIUM_CONFIRMATION_DRAFT, "awaitingOrderConfirmation": True}
+    result, mock_create_order, _, _sb = _run(
+        "i wrote that i do not have a food allergies", awaiting_draft, {"confirmedNow": False, "reply": "Sure!"},
+    )
+    assert result["reply"] != agent_service._ALLERGY_ORDER_BLOCKED_MESSAGE
+    assert result["order_created"] is True
+    mock_create_order.assert_called_once()
+
+
+def test_bare_no_outside_confirmation_state_does_not_create_or_confirm_order():
+    # Not awaiting confirmation -- a bare "no" must never globally read as
+    # order confirmation, only when it's literally answering our own
+    # mandatory allergy question (see allergy_negation_confirms's own note
+    # in agent_service.py).
+    result, mock_create_order, _, _sb = _run(
+        "no", _MEDIUM_CONFIRMATION_DRAFT, {"confirmedNow": False, "reply": "Could you confirm?"},
+    )
+    assert result["order_created"] is False
+    mock_create_order.assert_not_called()
+
+
+def test_allergy_negation_at_final_confirmation_proceeds_over_whatsapp_too():
+    # run_order_assistant_turn is the one function shared by both Chat
+    # (chat.py) and WhatsApp inbound ordering (inbound_service.py) -- no
+    # separate WhatsApp-only path exists to have missed the fix.
+    awaiting_draft = {**_MEDIUM_CONFIRMATION_DRAFT, "awaitingOrderConfirmation": True}
+    result, mock_create_order, _, _sb = _run(
+        "no food allergies", awaiting_draft, {"confirmedNow": False, "reply": "Sure!"}, channel="whatsapp",
+    )
+    assert result["order_created"] is True
+    mock_create_order.assert_called_once()
+
+
 # --- Pickup Date + Order Priority, Phase 2: optional chat capture ----------
 
 

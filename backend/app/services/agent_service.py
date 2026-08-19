@@ -1327,6 +1327,35 @@ def _mentions_food_allergy(message: str) -> bool:
     return bool(_ALLERGY_MENTION_PATTERN.search(message))
 
 
+# Chat Allergy Negation bug: _ALLERGY_CONFIRMATION_PROMPT above literally
+# asks the customer to "confirm you do not have any food allergies" -- so
+# the expected reply, positive or negative, almost always contains
+# "allerg" and tripped _mentions_food_allergy above regardless of
+# polarity. This is a second, independent deterministic gate (never
+# Claude's judgment, same posture as _mentions_food_allergy itself) that
+# recognizes ONLY a short, unambiguous negative statement -- anchored
+# with fullmatch, not search, so it can never match a real disclosure
+# buried in a longer message. Anything not on this narrow allow-list
+# (including every existing genuine-disclosure test string) falls
+# through as "not a clear negation" and stays protected by the block
+# below -- safe-by-default, same as _mentions_food_allergy's own note.
+_ALLERGY_NEGATION_FILLER = re.compile(r"^(i\s+(wrote|said|meant|typed)\s+(that\s+)?)", re.IGNORECASE)
+
+_ALLERGY_NEGATION_PATTERN = re.compile(
+    r"^(no|none|nope)$"
+    r"|^no\s+(food\s+)?allerg\w*$"
+    r"|^i\s+(have|'ve)\s+no\s+(food\s+)?allerg\w*$"
+    r"|^i\s+(do\s+not|don'?t)\s+have\s+(any\s+|a\s+)?(food\s+)?allerg\w*$",
+    re.IGNORECASE,
+)
+
+
+def _is_clear_allergy_negation(message: str) -> bool:
+    normalized = message.strip().lower().rstrip(".!")
+    normalized = _ALLERGY_NEGATION_FILLER.sub("", normalized).strip()
+    return bool(_ALLERGY_NEGATION_PATTERN.fullmatch(normalized))
+
+
 def _normalize_order_draft(draft: dict | None) -> dict:
     draft = draft or {}
     normalized = {field: (draft.get(field) or None) for field in _ORDER_DRAFT_FIELDS}
@@ -1736,7 +1765,12 @@ def run_order_assistant_turn(
     # updated) -- nothing extracted from this message, no progress lost,
     # so the customer can pick the order back up with the bakery directly
     # or, if this was a false match, simply continue.
-    if _mentions_food_allergy(message):
+    #
+    # Chat Allergy Negation bug: a clear negative statement (see
+    # _is_clear_allergy_negation's own note) is exempted from the block --
+    # answering our own mandatory confirmation question with "no" must not
+    # read as a disclosure of the thing being denied.
+    if _mentions_food_allergy(message) and not _is_clear_allergy_negation(message):
         notification = _persist_reply(None, _ALLERGY_ORDER_BLOCKED_MESSAGE)
         return {
             "reply": _ALLERGY_ORDER_BLOCKED_MESSAGE,
@@ -1885,16 +1919,34 @@ def run_order_assistant_turn(
                 updated["pickupTime"] = parsed_time.isoformat()
 
     all_filled = all(updated[field] for field in _ORDER_DRAFT_FIELDS)
-    # Unchanged triple gate: Claude's own confirmedNow AND all_filled AND
-    # the independent keyword check must all agree -- see this module's
-    # own docstring for why three independent conditions, not one model's
-    # opinion. `was_awaiting_confirmation` never bypasses any of these
-    # (it's fed to the prompt below instead, so Claude's own confirmedNow
-    # judgment is better-informed, not overridden by Python guessing what
-    # Claude "really meant") -- a keyword substring inside an otherwise
-    # unrelated message must still never confirm just because we happen
-    # to be mid-confirmation-dance.
-    confirmed = bool(parsed.get("confirmedNow")) and all_filled and _looks_like_confirmation(message)
+    # Triple gate: Claude's own confirmedNow AND all_filled AND the
+    # independent keyword check must all agree -- see this module's own
+    # docstring for why three independent conditions, not one model's
+    # opinion. `was_awaiting_confirmation` on its own never bypasses any of
+    # these (it's fed to the prompt below instead, so Claude's own
+    # confirmedNow judgment is better-informed, not overridden by Python
+    # guessing what Claude "really meant") -- a keyword substring inside an
+    # otherwise unrelated message must still never confirm just because we
+    # happen to be mid-confirmation-dance.
+    #
+    # Chat Allergy Negation bug, final-confirmation half: the one narrow
+    # exception is a clear allergy negation (_is_clear_allergy_negation)
+    # arriving while we ARE awaiting confirmation -- our own last message
+    # was "...confirm you do not have any food allergies", so answering it
+    # ("no", "no food allergies", ...) is the customer directly satisfying
+    # that ask, not Claude inferring intent. This is still 100%
+    # deterministic (never depends on parsed["confirmedNow"], which Claude
+    # is instructed to leave false for anything short of an explicit "yes,
+    # place the order" -- see the prompt's own #8) and stays scoped to
+    # was_awaiting_confirmation, so a bare "no" on any other turn is still
+    # just Claude's normal not-a-confirmation path, never an accidental
+    # order.
+    allergy_negation_confirms = was_awaiting_confirmation and _is_clear_allergy_negation(message)
+    confirmed = (
+        (bool(parsed.get("confirmedNow")) or allergy_negation_confirms)
+        and all_filled
+        and (_looks_like_confirmation(message) or allergy_negation_confirms)
+    )
     # Recomputed fresh every turn from this turn's own outcome (never
     # accumulated/stale) -- see _normalize_order_draft's own note.
     updated["awaitingOrderConfirmation"] = all_filled and not confirmed
